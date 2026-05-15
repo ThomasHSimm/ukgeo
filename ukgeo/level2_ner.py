@@ -4,7 +4,7 @@ No spaCy dependency. Fast enough for bulk (10k+ entries/sec target).
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import get_close_matches
 from typing import Optional
 import polars as pl
@@ -42,6 +42,9 @@ class ScoringWeights:
     fuzzy_cutoff: float = 0.75      # difflib cutoff for close matches
     fuzzy_confidence_cap: str = "Medium"  # fuzzy matches never exceed this
 
+    # Domain-specific words to treat as context/qualifiers rather than places
+    extra_qualifiers: list[str] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Token entity types
@@ -52,6 +55,9 @@ _QUALIFIER_TOKENS = {
     "roundabout", "bypass", "crossing", "bridge", "tunnel", "services",
     "northbound", "southbound", "eastbound", "westbound", "road", "street",
     "avenue", "lane", "drive", "way", "close", "place",
+    "motorway", "expressway", "flyover", "viaduct", "overpass", "underpass",
+    "carriageway", "sliproad", "spur", "msa", "welcome", "extra", "moto",
+    "break",
 }
 
 _ROAD_MOTORWAY_RE = re.compile(r"^M\d{1,3}$", re.IGNORECASE)
@@ -170,14 +176,17 @@ def tokenise(text: str, phrase_pattern: Optional[re.Pattern] = None) -> list[str
 def tag_tokens(
     tokens: list[str],
     gazetteer: TokenGazetteer,
-    fuzzy_cutoff: float = 0.65,
+    weights: ScoringWeights,
 ) -> list[TaggedToken]:
     tagged = []
     prev_qualifier = False
+    qualifier_tokens = _QUALIFIER_TOKENS | {
+        token.lower() for token in weights.extra_qualifiers
+    }
     for raw in tokens:
         # Restore underscores → spaces for display/matching
         norm = raw.upper().replace("_", " ")
-        is_qual = norm.lower() in _QUALIFIER_TOKENS
+        is_qual = norm.lower() in qualifier_tokens
         types = gazetteer.tag(norm)  # tag on restored form
         fuzzy = False
 
@@ -185,7 +194,7 @@ def tag_tokens(
             types = ["junction"]
 
         if types == ["unknown"] and not is_qual:
-            fuzzy_match = gazetteer.fuzzy_tag(norm, cutoff=fuzzy_cutoff)
+            fuzzy_match = gazetteer.fuzzy_tag(norm, cutoff=weights.fuzzy_cutoff)
             if fuzzy_match:
                 types = gazetteer.tag(fuzzy_match)
                 fuzzy = True
@@ -394,7 +403,7 @@ def try_level2(
     if not tokens:
         return None
 
-    tagged = tag_tokens(tokens, gazetteer, fuzzy_cutoff=weights.fuzzy_cutoff)
+    tagged = tag_tokens(tokens, gazetteer, weights)
     fuzzy_used = any(tk.fuzzy_match for tk in tagged)
 
     # Extract road ref + junction from Level 1 partial

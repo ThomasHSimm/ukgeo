@@ -1,0 +1,10 @@
+extra_qualifiers:
+  - interchange
+  - services
+  - msa
+  - junction
+  - bypass
+  - roundabout
+  - carriageway
+  - sliproad
+  - spur

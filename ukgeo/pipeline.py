@@ -37,6 +37,7 @@ class Geocoder:
         weights: Optional[ScoringWeights] = None,
         weights_path: Optional[Path] = None,
         max_level: int = 2,
+        extra_qualifiers: list[str] | None = None,
     ):
         """
         Args:
@@ -45,10 +46,13 @@ class Geocoder:
                            or uses defaults.
             weights_path:  Path to a YAML weights file (config/weights.yaml).
             max_level:     Maximum pipeline level to attempt (1-4). Default 2.
+            extra_qualifiers: Additional domain words to treat as qualifiers.
         """
         self._lookup = OSNamesLookup(parquet_path)
         self._gazetteer = TokenGazetteer(self._lookup)
         self._weights = weights or self._load_weights(weights_path)
+        if extra_qualifiers is not None:
+            self._weights.extra_qualifiers = extra_qualifiers
         self._max_level = max_level
 
     # ------------------------------------------------------------------
