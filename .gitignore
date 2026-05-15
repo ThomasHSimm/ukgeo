@@ -1,1 +1,27 @@
+# OS Open Names parquet — too large for git (~200MB)
+data/*.parquet
+data/*.csv
 
+# Calibrated weights are user-specific, not committed by default
+# Remove this line if you want to share weights in the repo
+config/weights.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+env/
+
+# Ruff / pytest cache
+.ruff_cache/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

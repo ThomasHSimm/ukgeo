@@ -1,16 +1,17 @@
-
 """
 Level 2 — token-based entity tagging + OS Names candidate scoring.
 No spaCy dependency. Fast enough for bulk (10k+ entries/sec target).
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from difflib import get_close_matches
 from typing import Optional
 import polars as pl
 
 from .models import GeoResult
 from .lookup import OSNamesLookup
+from .uk_admin import ALL_ADMIN
 
 # ---------------------------------------------------------------------------
 # Scoring weights (tuneable via calibration)
@@ -19,36 +20,38 @@ from .lookup import OSNamesLookup
 @dataclass
 class ScoringWeights:
     # Candidate boosts (additive)
-    county_context_match: float = 5.0    # candidate is in mentioned county
-    district_context_match: float = 3.0  # candidate is in mentioned district
-    city_context_match: float = 2.0      # candidate near mentioned city
-    road_context_match: float = 4.0      # candidate is on mentioned road
-    junction_match: float = 8.0          # explicit junction number match
-    type_weight_scale: float = 1.0       # multiplier on OS Names TYPE_WEIGHT
+    county_context_match: float = 5.0
+    district_context_match: float = 3.0
+    city_context_match: float = 2.0
+    road_context_match: float = 4.0
+    junction_match: float = 8.0
+    type_weight_scale: float = 1.0
 
     # Penalties (subtractive)
-    admin_contradiction: float = -4.0    # county mentioned but candidate outside it
-    ambiguous_token: float = -1.0        # token matched multiple entity types
-    near_qualifier: float = -1.0         # "near X" — X is context not primary
+    admin_contradiction: float = -4.0
+    ambiguous_token: float = -1.0
+    near_qualifier: float = -1.0
 
     # Confidence thresholds (on normalised 0-1 score)
-    high_threshold: float = 0.65
-    medium_threshold: float = 0.35
+    # These are intentionally low — normalisation denominator is a theoretical
+    # maximum; real scores cluster in 0.1-0.4 range for correct matches.
+    high_threshold: float = 0.25
+    medium_threshold: float = 0.10
+
+    # Fuzzy matching
+    fuzzy_cutoff: float = 0.75      # difflib cutoff for close matches
+    fuzzy_confidence_cap: str = "Medium"  # fuzzy matches never exceed this
 
 
 # ---------------------------------------------------------------------------
 # Token entity types
 # ---------------------------------------------------------------------------
 
-ENTITY_TYPES = (
-    "county", "district", "city", "town", "village",
-    "road_motorway", "road_a", "junction", "qualifier", "unknown"
-)
-
 _QUALIFIER_TOKENS = {
     "near", "by", "at", "on", "off", "between", "junction", "interchange",
     "roundabout", "bypass", "crossing", "bridge", "tunnel", "services",
-    "northbound", "southbound", "eastbound", "westbound",
+    "northbound", "southbound", "eastbound", "westbound", "road", "street",
+    "avenue", "lane", "drive", "way", "close", "place",
 }
 
 _ROAD_MOTORWAY_RE = re.compile(r"^M\d{1,3}$", re.IGNORECASE)
@@ -63,8 +66,9 @@ class TaggedToken:
     normalised: str
     entity_type: str
     is_qualifier: bool = False
-    ambiguous: bool = False          # matched >1 entity type
+    ambiguous: bool = False
     preceded_by_qualifier: bool = False
+    fuzzy_match: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -74,19 +78,26 @@ class TaggedToken:
 class TokenGazetteer:
     """
     Lightweight lookup sets derived from OS Open Names.
-    Built once, queried per token (O(1) set membership).
+    Built once at Geocoder init, O(1) set membership per token.
     """
 
     def __init__(self, lookup: OSNamesLookup):
         df = lookup._df
-        self.counties   = self._name_set(df, ["County", "Unitary Authority",
-                                               "Metropolitan District", "London Borough"])
+        # OS Names CSV has no county rows — supplement with static reference
+        self.counties   = ALL_ADMIN
         self.districts  = self._name_set(df, ["District Borough"])
         self.cities     = self._name_set(df, ["City", "Suburban Area"])
         self.towns      = self._name_set(df, ["Town"])
         self.villages   = self._name_set(df, ["Village", "Hamlet", "Other Settlement"])
         self.motorways  = self._name_set(df, ["Motorway"])
         self.a_roads    = self._name_set(df, ["Numbered Road", "Named Road"])
+
+        # Combined place set for fuzzy matching
+        self.all_places = (
+            self.counties | self.districts | self.cities | self.towns | self.villages
+        )
+        # Pre-compiled phrase joiner for multi-word admin names
+        self.phrase_pattern = _build_phrase_pattern(self.counties)
 
     @staticmethod
     def _name_set(df: pl.DataFrame, local_types: list[str]) -> set[str]:
@@ -96,48 +107,97 @@ class TokenGazetteer:
         )
 
     def tag(self, token: str) -> list[str]:
-        """Return all matching entity types for a token (may be >1 = ambiguous)."""
+        """Return all matching entity types for a token (>1 = ambiguous).
+        Token may be a restored multi-word phrase e.g. 'WEST YORKSHIRE'."""
         t = token.upper()
         matches = []
-        if t in self.counties:                    matches.append("county")
-        if t in self.districts:                   matches.append("district")
-        if t in self.cities:                      matches.append("city")
-        if t in self.towns:                       matches.append("town")
-        if t in self.villages:                    matches.append("village")
-        if _ROAD_MOTORWAY_RE.match(t):            matches.append("road_motorway")
-        if _ROAD_A_RE.match(t):                   matches.append("road_a")
-        if _JUNCTION_RE.match(t) or t in self.motorways: matches.append("junction")
+        if t in self.counties:             matches.append("county")
+        if t in self.districts:            matches.append("district")
+        if t in self.cities:               matches.append("city")
+        if t in self.towns:                matches.append("town")
+        if t in self.villages:             matches.append("village")
+        if _ROAD_MOTORWAY_RE.match(t):     matches.append("road_motorway")
+        if _ROAD_A_RE.match(t):            matches.append("road_a")
+        if _JUNCTION_RE.match(t):          matches.append("junction")
         return matches or ["unknown"]
+
+    def fuzzy_tag(self, token: str, cutoff: float = 0.65) -> Optional[str]:
+        """
+        Try difflib fuzzy match against all place names.
+        Returns the best match string if found, else None.
+        Only used when exact tag returns 'unknown'.
+        Minimum token length of 5 prevents short common words mis-matching.
+        """
+        t = token.upper()
+        if len(t) < 5:
+            return None
+        matches = get_close_matches(t, self.all_places, n=1, cutoff=cutoff)
+        return matches[0] if matches else None
 
 
 # ---------------------------------------------------------------------------
 # Tokenise + tag
 # ---------------------------------------------------------------------------
 
-def tokenise(text: str) -> list[str]:
-    """Split on whitespace and punctuation, drop empties."""
+def _build_phrase_pattern(admin_set: set[str]) -> re.Pattern:
+    """
+    Build a regex that matches any multi-word admin phrase (longest first).
+    Used to pre-join phrases like 'West Yorkshire' → 'West_Yorkshire' before tokenising.
+    """
+    multi_word = sorted(
+        (p for p in admin_set if " " in p),
+        key=len, reverse=True  # longest first so 'East Riding of Yorkshire' beats 'Yorkshire'
+    )
+    escaped = [re.escape(p) for p in multi_word]
+    return re.compile(r"\b(" + "|".join(escaped) + r")\b", re.IGNORECASE)
+
+
+def _join_phrases(text: str, pattern: re.Pattern) -> str:
+    """Replace spaces within matched admin phrases with underscores."""
+    return pattern.sub(lambda m: m.group(0).replace(" ", "_"), text)
+
+
+def tokenise(text: str, phrase_pattern: Optional[re.Pattern] = None) -> list[str]:
+    """
+    Split text into tokens. If phrase_pattern is supplied, multi-word admin
+    phrases are pre-joined with underscores so they survive as single tokens.
+    """
+    if phrase_pattern:
+        text = _join_phrases(text, phrase_pattern)
     return [t for t in re.split(r"[\s,;/\(\)\-]+", text.strip()) if t]
 
 
-def tag_tokens(tokens: list[str], gazetteer: TokenGazetteer) -> list[TaggedToken]:
+def tag_tokens(
+    tokens: list[str],
+    gazetteer: TokenGazetteer,
+    fuzzy_cutoff: float = 0.65,
+) -> list[TaggedToken]:
     tagged = []
     prev_qualifier = False
     for raw in tokens:
-        norm = raw.upper()
+        # Restore underscores → spaces for display/matching
+        norm = raw.upper().replace("_", " ")
         is_qual = norm.lower() in _QUALIFIER_TOKENS
-        types = gazetteer.tag(raw)
+        types = gazetteer.tag(norm)  # tag on restored form
+        fuzzy = False
 
-        # Junction number: bare digit(s) after a qualifier like "Junction"
         if _JUNCTION_NUM_RE.match(norm) and prev_qualifier:
             types = ["junction"]
 
+        if types == ["unknown"] and not is_qual:
+            fuzzy_match = gazetteer.fuzzy_tag(norm, cutoff=fuzzy_cutoff)
+            if fuzzy_match:
+                types = gazetteer.tag(fuzzy_match)
+                fuzzy = True
+
         tagged.append(TaggedToken(
-            raw=raw,
+            raw=raw.replace("_", " "),
             normalised=norm,
             entity_type=types[0],
             is_qualifier=is_qual,
             ambiguous=len(types) > 1,
             preceded_by_qualifier=prev_qualifier,
+            fuzzy_match=fuzzy,
         ))
         prev_qualifier = is_qual
     return tagged
@@ -152,38 +212,45 @@ def score_candidate(
     tagged: list[TaggedToken],
     weights: ScoringWeights,
 ) -> float:
-    """
-    Score a single OS Names candidate row against the tagged tokens.
-    Returns a raw float score (higher = better match).
-    """
     score = row.get("TYPE_WEIGHT", 1) * weights.type_weight_scale
 
-    county_upper  = (row.get("COUNTY_UNITARY") or "").upper()
+    county_upper   = (row.get("COUNTY_UNITARY") or "").upper()
     district_upper = (row.get("DISTRICT_BOROUGH") or "").upper()
-    place_upper   = (row.get("POPULATED_PLACE") or "").upper()
-    name_upper    = (row.get("NAME1_UPPER") or "")
+    place_upper    = (row.get("POPULATED_PLACE") or "").upper()
+    name_upper     = (row.get("NAME1_UPPER") or "")
 
     for tk in tagged:
         norm = tk.normalised
+
         if tk.ambiguous:
             score += weights.ambiguous_token
 
-        if tk.entity_type == "county" and norm in county_upper:
-            score += weights.county_context_match
-        elif tk.entity_type == "county" and county_upper and norm not in county_upper:
-            score += weights.admin_contradiction
+        if tk.fuzzy_match:
+            # Fuzzy matches contribute but at half weight
+            score += weights.city_context_match * 0.5
+            continue
 
-        if tk.entity_type == "district" and norm in district_upper:
-            score += weights.district_context_match
+        if tk.entity_type == "county":
+            if norm in county_upper:
+                score += weights.county_context_match
+            elif county_upper and norm not in county_upper:
+                score += weights.admin_contradiction
 
-        if tk.entity_type in ("city", "town") and norm in place_upper:
-            score += weights.city_context_match
+        elif tk.entity_type == "district":
+            if norm in district_upper:
+                score += weights.district_context_match
 
-        if tk.entity_type in ("road_motorway", "road_a") and norm in name_upper:
-            score += weights.road_context_match
+        elif tk.entity_type in ("city", "town", "village"):
+            if norm in place_upper or norm in county_upper:
+                score += weights.city_context_match
 
-        if tk.entity_type == "junction" and norm in name_upper:
-            score += weights.junction_match
+        elif tk.entity_type in ("road_motorway", "road_a"):
+            if norm in name_upper:
+                score += weights.road_context_match
+
+        elif tk.entity_type == "junction":
+            if norm in name_upper:
+                score += weights.junction_match
 
         if tk.preceded_by_qualifier:
             score += weights.near_qualifier
@@ -192,13 +259,23 @@ def score_candidate(
 
 
 def normalise_score(raw: float, max_possible: float) -> float:
-    """Normalise score to 0-1."""
     if max_possible <= 0:
         return 0.0
     return max(0.0, min(1.0, raw / max_possible))
 
 
-def confidence_from_score(score: float, weights: ScoringWeights) -> str:
+def confidence_from_score(
+    score: float,
+    weights: ScoringWeights,
+    fuzzy_used: bool = False,
+) -> str:
+    if fuzzy_used:
+        # Fuzzy matches are capped at Medium
+        if score >= weights.high_threshold:
+            return weights.fuzzy_confidence_cap
+        if score >= weights.medium_threshold:
+            return "Medium"
+        return "Low"
     if score >= weights.high_threshold:
         return "High"
     if score >= weights.medium_threshold:
@@ -206,13 +283,8 @@ def confidence_from_score(score: float, weights: ScoringWeights) -> str:
     return "Low"
 
 
-# ---------------------------------------------------------------------------
-# Max possible score (for normalisation)
-# ---------------------------------------------------------------------------
-
 def max_possible_score(tagged: list[TaggedToken], weights: ScoringWeights) -> float:
-    """Upper bound: every token matches perfectly, no penalties."""
-    base = 10 * weights.type_weight_scale  # max TYPE_WEIGHT
+    base = 10 * weights.type_weight_scale
     per_token = max(
         weights.county_context_match,
         weights.district_context_match,
@@ -221,6 +293,36 @@ def max_possible_score(tagged: list[TaggedToken], weights: ScoringWeights) -> fl
         weights.junction_match,
     )
     return base + len(tagged) * per_token
+
+
+# ---------------------------------------------------------------------------
+# Candidate filtering — use admin context to hard-filter before scoring
+# ---------------------------------------------------------------------------
+
+def filter_by_admin_context(
+    candidates: pl.DataFrame,
+    tagged: list[TaggedToken],
+) -> pl.DataFrame:
+    """
+    OS Names CSV stores COUNTY_UNITARY and POPULATED_PLACE as URIs — unusable
+    for text filtering. Instead we filter by NAME1_UPPER containment only,
+    preferring rows whose name contains a tagged city/town token.
+    Falls back to full candidate set if filtering yields nothing.
+    """
+    city_tokens = [
+        tk.normalised for tk in tagged
+        if tk.entity_type in ("city", "town", "village") and not tk.is_qualifier
+    ]
+
+    filtered = candidates
+    for token in city_tokens:
+        attempt = filtered.filter(
+            pl.col("NAME1_UPPER").str.contains(token, literal=True)
+        )
+        if len(attempt) > 0:
+            filtered = attempt
+
+    return filtered if len(filtered) > 0 else candidates
 
 
 # ---------------------------------------------------------------------------
@@ -234,18 +336,14 @@ def try_level2(
     gazetteer: TokenGazetteer,
     weights: ScoringWeights,
 ) -> Optional[GeoResult]:
-    """
-    Attempt to resolve text using token tagging + OS Names candidate scoring.
-    `partial` is the GeoResult from Level 1 (may carry road_ref / junction in notes).
-    Returns GeoResult if a candidate is found, None otherwise.
-    """
-    tokens = tokenise(text)
+    tokens = tokenise(text, phrase_pattern=gazetteer.phrase_pattern)
     if not tokens:
         return None
 
-    tagged = tag_tokens(tokens, gazetteer)
+    tagged = tag_tokens(tokens, gazetteer, fuzzy_cutoff=weights.fuzzy_cutoff)
+    fuzzy_used = any(tk.fuzzy_match for tk in tagged)
 
-    # Extract road ref + junction from Level 1 partial if available
+    # Extract road ref + junction from Level 1 partial
     road_ref = None
     junction_num = None
     if partial and partial.notes:
@@ -255,32 +353,37 @@ def try_level2(
             if part.startswith("junction="):
                 junction_num = part.split("=", 1)[1]
 
-    # Extract county/near context from tagged tokens for search narrowing
-    county_tokens = [tk.normalised for tk in tagged if tk.entity_type == "county"]
-    county_hint = county_tokens[0] if county_tokens else None
+    # Collect context tokens by type
+    county_tokens = [tk for tk in tagged if tk.entity_type == "county" and not tk.is_qualifier]
+    place_tokens  = [tk for tk in tagged if tk.entity_type in ("city", "town", "village") and not tk.is_qualifier]
+    all_non_qual  = [tk for tk in tagged if not tk.is_qualifier and tk.entity_type != "unknown"]
 
-    # Choose search strategy
-    if road_ref and junction_num:
-        candidates_df = lookup.search_road(road_ref, junction_num=junction_num)
-    elif road_ref:
-        near_tokens = [tk.raw for tk in tagged if tk.entity_type in ("city", "town", "village")]
-        candidates_df = lookup.search_road(road_ref, near_name=near_tokens[0] if near_tokens else None)
+    if road_ref:
+        near_name = place_tokens[0].raw if place_tokens else None
+        candidates_df = lookup.search_road(road_ref, junction_num=junction_num, near_name=near_name)
+        # Road/junction not in OS Names — fall back to nearby place
+        if candidates_df.is_empty() and near_name:
+            candidates_df = lookup.search_name(near_name)
+        elif candidates_df.is_empty() and county_tokens:
+            candidates_df = lookup.search_name(county_tokens[0].raw)
     else:
-        # General place search — use the most specific non-qualifier token
-        place_tokens = [
-            tk for tk in tagged
-            if tk.entity_type in ("city", "town", "village", "district")
-            and not tk.is_qualifier
-        ]
-        if not place_tokens:
-            place_tokens = [tk for tk in tagged if not tk.is_qualifier and tk.entity_type != "unknown"]
-        if not place_tokens:
+        # Primary search token: prefer specific place over county
+        primary_tk = (
+            place_tokens[0] if place_tokens
+            else all_non_qual[0] if all_non_qual
+            else None
+        )
+        if primary_tk is None:
             return None
-        primary = place_tokens[0].raw
-        candidates_df = lookup.search_name(primary, county=county_hint)
+        candidates_df = lookup.search_name(primary_tk.raw)
 
     if candidates_df.is_empty():
         return None
+
+    # Filter: if county tokens present, prefer candidates whose NAME1_UPPER
+    # or MBR overlaps — use NAME1_UPPER containment as a soft pre-filter
+    # (hard filter done in filter_by_admin_context)
+    candidates_df = filter_by_admin_context(candidates_df, tagged)
 
     # Score each candidate
     max_score = max_possible_score(tagged, weights)
@@ -297,20 +400,27 @@ def try_level2(
         return None
 
     norm_score = normalise_score(best_score, max_score)
-    confidence = confidence_from_score(norm_score, weights)
+    confidence = confidence_from_score(norm_score, weights, fuzzy_used=fuzzy_used)
 
-    lat, lon = lookup.bng_to_wgs84(
-        best_row["GEOMETRY_X"], best_row["GEOMETRY_Y"]
-    )
+    lat, lon = lookup.bng_to_wgs84(best_row["GEOMETRY_X"], best_row["GEOMETRY_Y"])
+
+    notes_parts = [f"match_score={norm_score:.3f}"]
+    if fuzzy_used:
+        notes_parts.append("fuzzy=true")
+    if road_ref and junction_num:
+        notes_parts.append("junction_data=unavailable")
 
     return GeoResult(
         input=text,
         lat=lat,
         lon=lon,
         interpreted_as=f"{best_row['NAME1']} ({best_row['LOCAL_TYPE']})",
-        match_type=partial.match_type if partial else best_row["LOCAL_TYPE"].lower().replace(" ", "_"),
+        match_type=(
+            partial.match_type if partial
+            else best_row["LOCAL_TYPE"].lower().replace(" ", "_")
+        ),
         level_resolved=2,
         confidence=confidence,
         candidates_considered=len(candidates_df),
-        notes=f"match_score={norm_score:.3f}",
+        notes=",".join(notes_parts),
     )
