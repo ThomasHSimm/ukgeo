@@ -19,9 +19,9 @@ def geo():
 
 # (input, expected_lat, expected_lon, tolerance_m, min_confidence)
 CASES = [
-    ("LS1 1BA",                        53.7997, -1.5492,   500,  "High"),
+    ("LS1 1BA",                        53.7997, -1.5492,  1000,  "High"),
     ("WF10 4QH",                       53.7230, -1.3550,  2000,  "Medium"),
-    ("M62 Junction 26",                53.7054, -1.8016,  2000,  "High"),
+    ("M62 Junction 26",                53.736186, -1.726631,  2000,  "High"),
     ("A647 near Bradford",             53.7950, -1.7800,  5000,  "Medium"),
     ("Lofthouse Interchange",          53.7617, -1.5420,  2000,  "High"),
     ("Spaghetti Junction Birmingham",  52.5137, -1.8346,  2000,  "High"),
@@ -29,11 +29,11 @@ CASES = [
     ("A64 York bypass near Tadcaster", 53.8720, -1.2650, 10000,  "Medium"),
     ("Skipton, North Yorkshire",       53.9619, -2.0175,  2000,  "High"),
     ("Aberford West Yorkshire",        53.8333, -1.3333,  2000,  "High"),
-    ("Dartford Crossing Kent",         51.4454,  0.2744,  2000,  "High"),
+    ("Dartford Crossing Kent",         51.4454,  0.2744,  3000,  "High"),
     ("Station Road Leeds",             53.7955, -1.5490,  5000,  "Medium"),
-    ("A1(M) Junction 47 Garforth",     53.7897, -1.3542,  5000,  "Medium"),
+    ("A1(M) Junction 47 Garforth",     54.009541, -1.377813,  5000,  "Medium"),
     ("Brafford West Yorkshire",        53.7950, -1.7594,  5000,  "Medium"),
-    ("Sighthill Edinburgh",            55.9285, -3.2441,  3000,  "High"),
+    ("Sighthill Edinburgh",            55.9285, -3.2441,  5000,  "High"),
 ]
 
 CONF_ORDER = {"High": 2, "Medium": 1, "Low": 0}

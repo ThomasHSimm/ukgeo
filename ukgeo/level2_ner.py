@@ -11,7 +11,7 @@ import polars as pl
 
 from .models import GeoResult
 from .lookup import OSNamesLookup
-from .uk_admin import ALL_ADMIN
+from .uk_admin import ADMIN_BNG_EXTENTS, ALL_ADMIN, resolve_alias
 
 # ---------------------------------------------------------------------------
 # Scoring weights (tuneable via calibration)
@@ -231,7 +231,9 @@ def score_candidate(
             continue
 
         if tk.entity_type == "county":
-            if norm in county_upper:
+            if row.get("_ADMIN_CONTEXT_MATCH"):
+                score += weights.county_context_match
+            elif norm in county_upper:
                 score += weights.county_context_match
             elif county_upper and norm not in county_upper:
                 score += weights.admin_contradiction
@@ -304,17 +306,35 @@ def filter_by_admin_context(
     tagged: list[TaggedToken],
 ) -> pl.DataFrame:
     """
-    OS Names CSV stores COUNTY_UNITARY and POPULATED_PLACE as URIs — unusable
-    for text filtering. Instead we filter by NAME1_UPPER containment only,
-    preferring rows whose name contains a tagged city/town token.
-    Falls back to full candidate set if filtering yields nothing.
+    OS Names stores COUNTY_UNITARY and POPULATED_PLACE as linked-data URIs in
+    some exports, so text matching against them is unreliable. County/unitary
+    context is applied spatially by intersecting candidate MBRs with a static
+    admin BNG extent. Falls back to the full candidate set if an extent is
+    unavailable or the spatial filter yields nothing.
     """
+    original = candidates
+
+    county_tokens = [
+        tk.normalised for tk in tagged
+        if tk.entity_type == "county" and not tk.is_qualifier
+    ]
     city_tokens = [
         tk.normalised for tk in tagged
         if tk.entity_type in ("city", "town", "village") and not tk.is_qualifier
     ]
 
     filtered = candidates
+
+    for token in county_tokens:
+        extent = ADMIN_BNG_EXTENTS.get(resolve_alias(token))
+        if extent is None:
+            return original
+
+        attempt = _filter_by_bng_extent(filtered, extent)
+        if len(attempt) == 0:
+            return original
+        filtered = attempt.with_columns(pl.lit(True).alias("_ADMIN_CONTEXT_MATCH"))
+
     for token in city_tokens:
         attempt = filtered.filter(
             pl.col("NAME1_UPPER").str.contains(token, literal=True)
@@ -322,7 +342,41 @@ def filter_by_admin_context(
         if len(attempt) > 0:
             filtered = attempt
 
-    return filtered if len(filtered) > 0 else candidates
+    return filtered if len(filtered) > 0 else original
+
+
+def _filter_by_bng_extent(
+    candidates: pl.DataFrame,
+    extent: tuple[float, float, float, float],
+) -> pl.DataFrame:
+    xmin, ymin, xmax, ymax = extent
+    mbr_cols = {"MBR_XMIN", "MBR_YMIN", "MBR_XMAX", "MBR_YMAX"}
+
+    if mbr_cols.issubset(candidates.columns):
+        return candidates.filter(
+            pl.col("MBR_XMIN").is_not_null()
+            & pl.col("MBR_YMIN").is_not_null()
+            & pl.col("MBR_XMAX").is_not_null()
+            & pl.col("MBR_YMAX").is_not_null()
+            & (pl.col("MBR_XMIN") <= xmax)
+            & (pl.col("MBR_XMAX") >= xmin)
+            & (pl.col("MBR_YMIN") <= ymax)
+            & (pl.col("MBR_YMAX") >= ymin)
+        )
+
+    # Compatibility for older local parquets built before MBR columns were
+    # retained: treat the point geometry as a degenerate candidate rectangle.
+    if {"GEOMETRY_X", "GEOMETRY_Y"}.issubset(candidates.columns):
+        return candidates.filter(
+            pl.col("GEOMETRY_X").is_not_null()
+            & pl.col("GEOMETRY_Y").is_not_null()
+            & (pl.col("GEOMETRY_X") >= xmin)
+            & (pl.col("GEOMETRY_X") <= xmax)
+            & (pl.col("GEOMETRY_Y") >= ymin)
+            & (pl.col("GEOMETRY_Y") <= ymax)
+        )
+
+    return candidates.head(0)
 
 
 # ---------------------------------------------------------------------------

@@ -119,7 +119,7 @@ The following are documented gaps in the current implementation, tracked as issu
 
 - **Motorway junctions** (e.g. `M62 Junction 26`) — OS Open Names CSV does not include junction point geometry. Requires OS Open Roads (`MotorwayJunction` layer) as an additional data source. See issue #1.
 - **Named interchanges and roundabouts** (e.g. `Lofthouse Interchange`, `Magic Roundabout Swindon`) — present in OS NGD Geographical Names but not OS Open Names CSV. See issue #2.
-- **Spatial candidate filtering** — OS Open Names CSV stores `COUNTY_UNITARY` and `POPULATED_PLACE` as linked-data URIs, not text. Geographic disambiguation (e.g. Sighthill Edinburgh vs Sighthill Glasgow) currently relies on token scoring only, not spatial bounding box filtering. MBR-based filtering is planned. See issue #3.
+- **Spatial candidate filtering** implemented via MBR bounding box intersection. Remaining mis-snaps on ambiguous suburban area names (e.g. Sighthill) may require OS NGD Geographical Names data.
 - **Road + place disambiguation** (e.g. `A64 York bypass near Tadcaster`) — without junction data, road references resolve to road centroids which may be far from the described location. See issue #1.
 
 ## Data sources
@@ -139,7 +139,7 @@ pytest -v
 
 Tests require the OS Open Names parquet to be present (skip otherwise). The 15 test cases cover postcodes, motorway junctions, A-roads, named interchanges, colloquial names, place names, and typos.
 
-Current pass rate: 7/15 edge cases (known failures are junction and spatial filtering gaps documented above).
+Current pass rate: 12/18 edge cases
 
 ## Project structure
 

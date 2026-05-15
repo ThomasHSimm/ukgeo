@@ -25,7 +25,7 @@ _POSTCODE_OUTWARD = re.compile(r"\b([A-Z]{1,2}\d{1,2}[A-Z]?)\b", re.IGNORECASE)
 _MOTORWAY = re.compile(r"\bM(\d{1,3})\b", re.IGNORECASE)
 
 # A-road (including motorway-standard): A1, A647, A1(M)
-_AROAD = re.compile(r"\bA(\d{1,4})(\(M\))?\b", re.IGNORECASE)
+_AROAD = re.compile(r"\bA(\d{1,4})(\(M\))?(?=\W|$)", re.IGNORECASE)
 
 # Junction number following a road reference: J26, Junction 26, junction 47
 _JUNCTION = re.compile(r"\b(?:J|junction)\s*(\d{1,3})\b", re.IGNORECASE)
@@ -95,18 +95,16 @@ def try_level1(text: str) -> Optional[GeoResult]:
 
     if motorway or aroad:
         # Pass road metadata downstream via notes — Level 2 will use these
+        junc_num = junction.group(1) if junction else None
         road_ref = (
             f"M{motorway.group(1)}" if motorway
             else f"A{aroad.group(1)}{aroad.group(2) or ''}"
         )
-        junc_num = junction.group(1) if junction else None
-        # Return None: road references need OS Names to resolve to a point
-        # Attach extracted tokens to a partial result for the pipeline to carry
         return GeoResult(
             input=text,
             interpreted_as=f"{road_ref}" + (f" J{junc_num}" if junc_num else ""),
             match_type="road" if not junc_num else "junction",
-            level_resolved=None,   # not resolved yet
+            level_resolved=None,
             confidence=None,
             notes=f"road_ref={road_ref}" + (f",junction={junc_num}" if junc_num else ""),
         )

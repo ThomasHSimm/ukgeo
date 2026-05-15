@@ -49,10 +49,13 @@ _KEEP_COLS = [
 ]
 
 
+JUNCTIONS_PARQUET = Path(__file__).parent.parent / "data" / "os_open_roads_junctions.parquet"
+
+
 class OSNamesLookup:
     """
     Loads OS Open Names parquet and exposes query methods.
-    All queries return polars DataFrames.
+    Optionally loads OS Open Roads junction parquet if present.
     """
 
     def __init__(self, parquet_path: Path):
@@ -62,6 +65,12 @@ class OSNamesLookup:
                 "Run scripts/download_os_open_names.py first."
             )
         self._df = pl.read_parquet(parquet_path)
+
+        # Load junction data if available
+        if JUNCTIONS_PARQUET.exists():
+            self._junctions = pl.read_parquet(JUNCTIONS_PARQUET)
+        else:
+            self._junctions = None
 
     @property
     def size(self) -> int:
@@ -102,27 +111,55 @@ class OSNamesLookup:
         near_name: Optional[str] = None,
     ) -> pl.DataFrame:
         """
-        Look up a road reference (e.g. 'M62', 'A647') with optional junction.
-        Returns junction/roundabout rows if junction_num given, else road rows.
+        Look up a road/junction reference.
+        If junction_num is given, searches OS Open Roads junction parquet first
+        (format: "M62 J26"), falling back to OS Names road rows.
         """
-        road_upper = road_ref.upper()
-        local_types = ["Junction", "Roundabout"] if junction_num else ["Motorway", "Numbered Road", "Named Road"]
+        road_upper = road_ref.upper().strip()
+        junction_upper = junction_num.upper().strip().lstrip("J") if junction_num else None
+
+        # --- Junction lookup via OS Open Roads ---
+        if junction_upper and self._junctions is not None:
+            # Build combined key as OS stores it: "M62 J26", "A1(M) J47"
+            # Exact equality prevents M62 J26 from matching M621 J26.
+            search_key = f"{road_upper} J{junction_upper}"
+            junction_col = pl.col("JUNCTION_NUMBER").str.to_uppercase()
+            q = self._junctions.filter(
+                junction_col == search_key
+            )
+            if q.is_empty():
+                # Lettered junctions are stored as e.g. "J2A"; allow this only
+                # after the exact lookup misses.
+                q = self._junctions.filter(
+                    junction_col.str.starts_with(search_key)
+                    & (junction_col.str.len_chars() == len(search_key) + 1)
+                    & junction_col.str.slice(-1).is_in(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+                )
+            if not q.is_empty():
+                # Return in same schema as OS Names search for compatibility
+                return q.with_columns([
+                    pl.col("JUNCTION_NUMBER").alias("NAME1"),
+                    pl.lit("Junction").alias("LOCAL_TYPE"),
+                    pl.lit(9).cast(pl.Int8).alias("TYPE_WEIGHT"),
+                    pl.col("JUNCTION_NUMBER").str.to_uppercase().alias("NAME1_UPPER"),
+                    pl.lit("").cast(pl.Utf8).alias("NAME2_UPPER"),
+                    pl.lit(None).cast(pl.Utf8).alias("COUNTY_UNITARY"),
+                    pl.lit(None).cast(pl.Utf8).alias("DISTRICT_BOROUGH"),
+                    pl.lit(None).cast(pl.Utf8).alias("POPULATED_PLACE"),
+                ])
+
+        # --- Fallback: OS Names road rows ---
+        local_types = ["Motorway", "Numbered Road", "Named Road"]
         q = self._df.filter(
             pl.col("LOCAL_TYPE").is_in(local_types)
             & pl.col("NAME1_UPPER").str.contains(road_upper, literal=True)
         )
-        if junction_num:
-            q = q.filter(
-                pl.col("NAME1_UPPER").str.contains(junction_num, literal=True)
-                | pl.col("NAME2_UPPER").str.contains(junction_num, literal=True)
-            )
         if near_name:
             near_upper = near_name.upper()
-            # Prefer rows where POPULATED_PLACE or COUNTY_UNITARY mentions near_name
             q = q.with_columns(
                 pl.when(
-                    pl.col("POPULATED_PLACE").str.to_uppercase().str.contains(near_upper, literal=True)
-                    | pl.col("COUNTY_UNITARY").str.to_uppercase().str.contains(near_upper, literal=True)
+                    pl.col("POPULATED_PLACE").str.to_uppercase()
+                    .str.contains(near_upper, literal=True)
                 )
                 .then(pl.col("TYPE_WEIGHT") + 5)
                 .otherwise(pl.col("TYPE_WEIGHT"))
