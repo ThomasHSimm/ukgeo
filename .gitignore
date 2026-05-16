@@ -33,8 +33,7 @@ env/
 .codex/
 .code-review-graph/
 .mcp.json
-.claude/*
-!.claude/settings.json
+.claude/
 
 # OS / editor
 .DS_Store
