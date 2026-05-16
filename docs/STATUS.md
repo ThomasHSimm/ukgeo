@@ -2,9 +2,9 @@
 
 ## Test Suite
 
-**40 passed, 6 xfailed** (as of 2026-05-16)
+**40 passed, 6 xfailed** (as of 2026-05-17)
 
-All substantive test cases pass. The 5 `xfail` entries are documented known gaps, not regressions.
+All substantive test cases pass. The 6 `xfail` entries are documented known gaps, not regressions.
 
 ### Core geocoding cases (15/15 passing)
 
@@ -39,6 +39,7 @@ All substantive test cases pass. The 5 `xfail` entries are documented known gaps
 | Batch geocoding (≥ 80 % resolved) | 1 | ✓ |
 | Empty input → Low confidence + unresolved | 1 | ✓ |
 | `match_score` present in notes | 1 | ✓ |
+| B-road resolution (`B6265`, `B6113`, `B1224`) | 2 pass / 1 xfail | ✓ / xfail |
 
 ### xfail cases
 
@@ -57,7 +58,8 @@ These are documented known gaps tracked as regression guards, not failures:
 
 ## Data Sources
 
-The first three parquet files are required; the OSM roads file is optional but strongly recommended.
+The individual parquet files provide the richest metadata. The combined Kaggle parquet
+is a fallback for users who have downloaded only the release dataset.
 
 | File | Size | Source | Script |
 |---|---|---|---|
@@ -65,6 +67,7 @@ The first three parquet files are required; the OSM roads file is optional but s
 | `os_open_roads_junctions.parquet` | ~3 MB | OS Open Roads (OGL) | `scripts/download_os_open_roads.py` |
 | `osm_named_junctions.parquet` | ~1.3 MB | OpenStreetMap (ODbL) | `scripts/download_osm_named_junctions.py` |
 | `osm_roads.parquet` | ~6 MB | OpenStreetMap (ODbL) | `scripts/download_osm_roads.py` |
+| `kaggle/ukgeo_data.parquet` | release bundle | Combined sources | `scripts/build_kaggle_dataset.py` |
 
 ### Regenerating data
 
@@ -72,9 +75,11 @@ The first three parquet files are required; the OSM roads file is optional but s
 python scripts/download_os_open_names.py
 python scripts/download_os_open_roads.py
 python scripts/download_osm_named_junctions.py
+python scripts/download_osm_roads.py
+python scripts/build_kaggle_dataset.py
 ```
 
-Each script prompts before overwriting an existing file.
+Download scripts prompt before overwriting existing files.
 
 ---
 
@@ -86,7 +91,7 @@ Input string
     ▼
 Level 1 — Regex (level1_regex.py)
     │  Handles: full UK postcodes  →  postcodes.io API  →  lat/lon
-    │           road refs + junction numbers (extracted, passed to Level 2)
+    │           road refs (M/A/B roads) + junction numbers (extracted, passed to Level 2)
     │
     ▼ (if unresolved or partial)
 Level 2 — OS Names NER + scoring (level2_ner.py)
@@ -98,6 +103,8 @@ Level 2 — OS Names NER + scoring (level2_ner.py)
     ├─ Road-ref path
     │     OS Open Roads junction parquet → exact junction coords
     │     Falls back to OS Names road rows + BNG distance anchor to place name
+    │     B-roads can use OSM road-segment rows and choose the segment nearest
+    │     to the place anchor
     │
     └─ Place-name path
           OS Names candidate search (primary token)
@@ -143,6 +150,7 @@ Weights can be overridden at `Geocoder()` init or calibrated with `scripts/calib
 ## Known Limitations
 
 - **`A1(M)` bracket normalisation** — inputs without brackets (`A1M`, `A1 M`) are not parsed as motorway designators. Would require additional Level 1 regex variants.
+- **B-road place phrasing can be semantically awkward** — `B1224 York` is xfailed because the road runs toward York but the closest road segment is outside the city-centre tolerance.
 - **Spatial contradiction for short city names** — `Bradford Cornwall` still resolves to Bradford rather than being suppressed, because "Bradford" is an unambiguous high-weight match. Requires a harder admin-context veto, not yet implemented.
 - **OS Names URI fields** — `COUNTY_UNITARY` and `POPULATED_PLACE` are stored as linked-data URIs in the CSV export; context scoring falls back to BNG spatial extents rather than string matching.
 - **Colloquial junction names without alt_name in OSM** — if an interchange has no `alt_name` tag in OpenStreetMap (e.g. a newly named roundabout), it will not be found via the OSM augmentation path.

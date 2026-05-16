@@ -18,8 +18,12 @@ Without this, accuracy claims are not defensible or comparable to other tools.
 See `docs/gaps_and_ecosystem.md` section 5 for specification.
 This is the highest-credibility gap — low effort to construct (manual), high value.
 
+---
+
+## ✅ Recently completed
+
 ### ✅ STATS19 benchmark + B-road gap — COMPLETE (2026-05-16)
-v2 benchmark: 99.9% resolve rate (+31.0%), 3,299m median error (−1,293m), B-roads 5.1%→99.9%.
+v0.3 benchmark: 99.9% resolve rate (+31.0%), 3,299m median error (−1,293m), B-roads 5.1%→99.9%.
 
 Fix: Level 1 B-road regex + Level 2 road_b token type + OSM road segments (105,720 ways).
 See `data/stats19_diagnosis.txt` for full analysis. See `data/stats19_benchmark_v2.csv` for results.
@@ -27,17 +31,6 @@ See `data/stats19_diagnosis.txt` for full analysis. See `data/stats19_benchmark_
 Remaining open question: ukgeo assigns road centroids, not collision-specific points.
 ukgeo is most valuable for STATS19 where existing coordinates are missing or suspect, or
 for derived/summary datasets with road refs but no coordinates.
-1. Downloads a year of STATS19 collision data from data.gov.uk
-2. Synthesises free-text location strings from `Road_1`, `Junction_Detail`, `Local_Authority_District` fields
-3. Runs them through `ukgeo.geocode_batch()` 
-4. Compares results against STATS19 `Easting`/`Northing` ground truth
-5. Outputs a benchmark report (median error, % resolved, % within 500m/1km/5km)
-
-This doubles as:
-- A real-world bulk evaluation of ukgeo accuracy
-- Proof-of-concept integration with Open Road Risk pipeline
-- A calibration dataset for `scripts/calibrate.py`
-
 Related: ukgeo should be importable from Open Road Risk as a utility module. Consider publishing to PyPI or at minimum documenting as a git submodule/dependency.
 
 ---
@@ -61,6 +54,11 @@ Level 1 regex doesn't handle `A1M` or `A1 M` (no brackets).
 Fix: add alternative patterns to `_MOTORWAY`/`_AROAD` regex in `level1_regex.py`.
 Currently tracked as 2 xfail test cases.
 
+### B1224 York route disambiguation
+The B1224 resolves, but current matching can select the wrong representative segment around York.
+This is a routing/linear-referencing issue rather than an extraction failure.
+Currently tracked as a strict xfail test case.
+
 ### Spatial contradiction veto for short city names
 `Bradford Cornwall` still resolves to Bradford with High confidence.
 The MBR filter doesn't veto when the primary token is a strong unambiguous match.
@@ -83,10 +81,11 @@ Only fires if Level 3 also fails.
 
 ## 🟡 Data
 
-### Rebuild OS Open Names parquet with MBR columns
-The current parquet was built before MBR columns were added to `download_os_open_names.py`.
-Re-running the download will include `MBR_XMIN/YMIN/XMAX/YMAX` for better spatial filtering.
-Command: `python scripts/download_os_open_names.py` (answer `y`).
+### Keep source parquets and Kaggle fallback aligned
+Individual source parquets are preferred because they preserve richer metadata.
+The combined Kaggle parquet is a fallback for users who want one file.
+After updating source scripts or downloaded data, rebuild `data/kaggle/ukgeo_data.parquet`
+with `python scripts/build_kaggle_dataset.py`.
 
 ### National Highways RSS eval data
 `scripts/build_eval_dataset.py` couldn't parse the Highways England RSS feeds (malformed XML at time of run).
@@ -116,9 +115,11 @@ Curated set of inputs that test how humans write UK locations:
 No existing dataset covers this well — needs hand-curation or crowd-sourcing.
 
 ### Expand road suffix abbreviation tests
-Current suite covers: `Rd`, `St`, `Ave`, `Ln`, `Dr`, `Cl`, `Cres`, `Pl`
-Add: `Ct` (Court), `Sq` (Square), `Ter` (Terrace), `Gdns` (Gardens), `Gr` (Grove)
-Also: `St` ambiguity — `St Johns` (Saint) vs `Station St` (Street) regression test.
+Current high-signal suite covers stable examples for `Rd`, `St`, `Sq`, and `Gdns`,
+plus `St` ambiguity (`St Johns` as Saint vs `Station St` as Street).
+Add more only when diagnostics show stable equivalence pairs; avoid generic road names
+where OS Open Names candidate ordering is ambiguous.
+Candidate gaps: `Ct` (Court), `Ter` (Terrace), `Gr` (Grove), plus safe `Ave`, `Ln`, `Dr`, `Cl`, `Cres`, `Pl` examples.
 
 ---
 
@@ -134,9 +135,9 @@ Requires data parquets — either mock them in tests or add a `--no-data` skip f
 Note: data files are gitignored so CI needs a way to skip data-dependent tests.
 
 ### Calibrate weights against STATS19
-Once STATS19 eval corpus is built, run `scripts/calibrate.py` against it.
-Current default weights were set manually against 15 edge cases — STATS19 will give
-a much more representative signal across thousands of real inputs.
+Run `scripts/calibrate.py` against the STATS19 benchmark corpus and compare against
+the current defaults. STATS19 gives a broader signal than hand-written edge cases,
+but calibration should not optimise away human text regressions or county-context safeguards.
 
 ---
 
@@ -176,8 +177,8 @@ tuned for that domain. `domain="logistics"` would add `depot`, `warehouse` etc.
 Config files in `config/domain_*.yaml`. Currently only `domain_road_safety.yaml` exists.
 
 ### Postcode sector / district fallback
-If full postcode lookup fails (postcodes.io down), fall back to outward code centroid
-from a local lookup table. Avoids network dependency for partial postcodes.
+Full postcode lookup has a local OS Open Names fallback when postcodes.io is unavailable.
+Remaining task: support outward postcode districts/sectors from a local lookup table.
 
 ### Welsh language support
 OS Open Names includes Welsh place name aliases (`NAME2` / `NAME2_LANG = "cym"`).

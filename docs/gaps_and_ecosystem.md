@@ -2,14 +2,24 @@
 
 This document covers what ukgeo is missing, how it sits within the broader open road safety ecosystem, and what tools complement it and Open Road Risk. It is intended as a thinking document — honest about gaps, not a roadmap commitment.
 
+**In this file:** we track ukgeo's known gaps, adjacent road-safety tooling, and future ecosystem opportunities. For choosing between ukgeo and other geocoders, see `docs/alternative.md`.
+
 Last updated: May 2026.
 
 ---
 
+## Current status snapshot
+
+As of v0.3, ukgeo handles OS Open Names places and roads, OS Open Roads motorway junctions, OSM named junctions/roundabouts, and OSM-backed B-road segments. The combined Kaggle parquet is a convenience fallback; richer individual source parquets are preferred when present.
+
+The current STATS19 2024 benchmark resolves 99.9% of 5,000 sampled inputs, with median error around 3.3km. That is useful for coverage testing, but it is not a substitute for a human-labelled geocoding benchmark.
+
 ## 1. Geocoding pipeline gaps
 
-### B-roads (known, in progress)
-OS Open Names does not include B-roads as geocodable named road entries. The STATS19 benchmark showed 31.1% of inputs unresolved, driven primarily by B-road references. OSM road data via the Overpass API is being added as a supplementary source to fill this.
+### B-roads (mostly addressed in v0.3)
+OS Open Names does not include B-roads as geocodable named road entries. v0.3 adds B-road regex extraction, a `road_b` token type, and OSM road-segment lookup, which lifted B-road resolution in the STATS19 benchmark from 5.1% to 99.9%.
+
+The remaining gap is not extraction but route semantics. For example, `B1224 York` can resolve to a real B1224 segment that is still outside the expected city-centre tolerance. That is closer to linear referencing and route selection than simple geocoding.
 
 ### Linear referencing — the deeper problem
 "M62 between J26 and J27" or "A64 2 miles east of Tadcaster" are not geocoding problems — they are linear referencing problems. The input describes a point on a line, not a named place. ukgeo currently approximates this by finding the nearest road section to an anchor place, but a proper solution requires road geometry and interpolation along it.
@@ -22,7 +32,7 @@ The correct tool for this is geopandas with OS Open Roads geometry (which has fu
 This is a meaningful piece of work but would significantly improve accuracy for road safety data where "between junction X and Y" is a common location format.
 
 ### STATS19 already has coordinates
-The STATS19 benchmark confirmed an important finding: STATS19 records already have Easting/Northing from GPS at the scene. ukgeo's road centroid output (median 4.6km error) is worse than the existing coordinates for these records.
+The STATS19 benchmark confirmed an important finding: STATS19 records already have Easting/Northing from GPS at the scene. ukgeo's road-reference output is usually a representative road/junction/place coordinate, not the actual crash point. Even after v0.3 improved coverage and reduced median error to around 3.3km, that is still worse than valid scene coordinates for ordinary STATS19 records.
 
 ukgeo's actual value for STATS19 is:
 - **Data quality flagging** — identify records where the existing Easting/Northing looks implausible (e.g. point is on water, in a field, or far from the stated road)
@@ -30,6 +40,13 @@ ukgeo's actual value for STATS19 is:
 - **Missing coordinates** — fill in where STATS19 coordinates are absent or redacted
 
 This should be reflected clearly in documentation to set honest expectations.
+
+### Current strict xfail gaps
+The test suite intentionally keeps known limitations as strict `xfail` regression guards:
+- `A1M` / `A1 M` bracket normalisation for `A1(M)`
+- B1224 York route disambiguation
+- Overconfident bad-county context such as `Bradford Cornwall`
+- Historical Lofthouse Interchange test ground truth that pointed away from the actual M62/M1 interchange
 
 ### No reverse geocoding
 Given coordinates, what road/junction/place is this? Useful for validating STATS19 records and for interpreting Open Road Risk output ("this high-risk link is on the A647 near Bradford"). Currently completely absent. Would use the same OS Names parquet data already downloaded — moderate effort to add.

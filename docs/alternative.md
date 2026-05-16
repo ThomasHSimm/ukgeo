@@ -4,6 +4,10 @@ This document is for anyone evaluating whether to use ukgeo or something else. I
 
 The alternatives are described by what they do, not by how they compare to ukgeo. That way this document stays accurate even as ukgeo changes.
 
+**In this file:** we compare ukgeo with other geocoding, address parsing, and location lookup tools so a user can choose the right tool for a job. For ukgeo's own gaps and roadmap context, see `docs/gaps_and_ecosystem.md`.
+
+Limits, pricing, and service terms for hosted APIs change over time. Treat the numbers below as orientation, not procurement advice.
+
 ---
 
 ## What kind of geocoding problem do you have?
@@ -35,7 +39,7 @@ Before comparing tools, it helps to be precise about what you need:
 - CORS restrictions prevent use from browser-based tools
 - UK road network coverage is patchy — motorway junctions, named interchanges, and road section references are unreliable
 - Free text input quality depends heavily on how well the input matches OSM naming conventions
-- No concept of administrative hierarchy for disambiguation (e.g. Sighthill in Edinburgh vs Glasgow)
+- Not tuned for ukgeo-style administrative context scoring (e.g. Sighthill in Edinburgh vs Glasgow)
 
 **When to use it:** Clean place names and addresses at low volume, or self-hosted for high volume. Not recommended for road reference inputs or crash report style text.
 
@@ -173,6 +177,24 @@ Before comparing tools, it helps to be precise about what you need:
 
 ---
 
+### OS Places API / AddressBase / Royal Mail PAF
+
+**What it is:** Authoritative UK address-level data and services. These are the right class of tools when the problem is precise address geocoding rather than messy road-reference text.
+
+**Strengths:**
+- Best fit for address-level and premises-level accuracy
+- Authoritative UK address sources
+- Better suited to sub-100m address matching than ukgeo
+
+**Weaknesses:**
+- Premium/licensed data or service access
+- Licensing can restrict redistribution, derived data, and storage
+- Not designed around road-safety-style text such as `B6265 near Pateley Bridge` or `M62 between J26 and J27`
+
+**When to use it:** When you need address-level precision, have budget/licensing coverage, and your inputs are genuine addresses rather than road references or crash-report descriptions.
+
+---
+
 ### libpostal
 
 **What it is:** An open source C library (with Python bindings) for parsing and normalising international street addresses.
@@ -204,6 +226,7 @@ Before comparing tools, it helps to be precise about what you need:
 | Photon | ✓ (self-host) | ✓ (self-host) | ✗ | Partial | Medium |
 | postcodes.io | ✓ | ✓ | ✗ | ✗ | High (postcodes) |
 | OS Names API | Limited free tier | ✗ | Partial | ✗ | High |
+| OS Places / AddressBase / PAF | ✗ | Depends on licence | ✗ | Partial | Very high (addresses) |
 | libpostal | ✓ | ✓ | ✗ | ✗ | N/A (parser only) |
 
 ---
@@ -221,5 +244,6 @@ Before comparing tools, it helps to be precise about what you need:
 - You have messy UK location text: road references, junction descriptions, crash report style, colloquial names, old county names.
 - You need offline bulk processing — thousands to millions of records without API costs or rate limits.
 - Your domain is road safety, transport, or any application where road network references appear in free text.
+- You need M/A/B-road reference handling rather than address-level premises matching.
 - You want full control over the data and methodology — no black-box API, auditable pipeline, tuneable weights.
 - You're working with STATS19, AADF, or similar UK road datasets where location fields are semi-structured rather than clean addresses.
