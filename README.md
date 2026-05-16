@@ -23,7 +23,20 @@ Designed for bulk processing (hundreds to thousands of entries) with a single pa
 | 3 | API fallback *(stub)* | ~500ms | Ambiguous cases needing external lookup |
 | 4 | Local Ollama LLM *(stub)* | ~2s | Last resort — typos, novel references |
 
-## Setup
+## Quick start (pre-built data)
+
+Download `ukgeo_data.parquet` from [Kaggle](https://www.kaggle.com/datasets/thomashsimm/ukgeo-data)
+and place it in the `data/` folder, then:
+
+```python
+from ukgeo import Geocoder
+geo = Geocoder()
+print(geo.geocode("M62 Junction 26"))
+```
+
+No other setup needed.
+
+## Setup (build data locally)
 
 ### 1. Install
 

@@ -6,8 +6,27 @@ Priority: 🔴 High / 🟡 Medium / 🟢 Low / 💡 Idea
 
 ## 🔴 Next up
 
-### STATS19 integration / Open Road Risk bridge
-Build a script that:
+### CLI interface
+Add `ukgeo geocode input.csv --output results.csv` and `ukgeo geocode "M62 Junction 26"`.
+Low effort, high value — makes the tool accessible to non-Python road safety analysts.
+Use `argparse` or `click`, wrapping `geocode_batch()` and single `geocode()`.
+Add to `pyproject.toml` as a console script entry point.
+
+### Human-labelled evaluation set
+~300 inputs with human-verified true coordinates, stratified by input type.
+Without this, accuracy claims are not defensible or comparable to other tools.
+See `docs/gaps_and_ecosystem.md` section 5 for specification.
+This is the highest-credibility gap — low effort to construct (manual), high value.
+
+### ✅ STATS19 benchmark + B-road gap — COMPLETE (2026-05-16)
+v2 benchmark: 99.9% resolve rate (+31.0%), 3,299m median error (−1,293m), B-roads 5.1%→99.9%.
+
+Fix: Level 1 B-road regex + Level 2 road_b token type + OSM road segments (105,720 ways).
+See `data/stats19_diagnosis.txt` for full analysis. See `data/stats19_benchmark_v2.csv` for results.
+
+Remaining open question: ukgeo assigns road centroids, not collision-specific points.
+ukgeo is most valuable for STATS19 where existing coordinates are missing or suspect, or
+for derived/summary datasets with road refs but no coordinates.
 1. Downloads a year of STATS19 collision data from data.gov.uk
 2. Synthesises free-text location strings from `Road_1`, `Junction_Detail`, `Local_Authority_District` fields
 3. Runs them through `ukgeo.geocode_batch()` 
@@ -24,6 +43,18 @@ Related: ukgeo should be importable from Open Road Risk as a utility module. Con
 ---
 
 ## 🟡 Pipeline improvements
+
+### Linear referencing for road+offset inputs
+"M62 between J26 and J27" is a linear referencing problem, not a geocoding problem.
+Proper solution: find road geometry (OS Open Roads or OSMnx), interpolate point at
+fractional offset or distance from anchor place.
+See `docs/gaps_and_ecosystem.md` section 1 for detail.
+High value for road safety domain. Medium-high effort.
+
+### Reverse geocoding
+Given coordinates, return road/junction/place name.
+Useful for STATS19 data quality validation and Open Road Risk output interpretation.
+Uses existing OS Names parquet — moderate effort to add as new pipeline direction.
 
 ### A1(M) bracket normalisation
 Level 1 regex doesn't handle `A1M` or `A1 M` (no brackets).
@@ -67,6 +98,15 @@ Add to eval dataset when available.
 
 ## 🟢 Testing
 
+### Confidence calibration plot
+For High/Medium/Low resolved results, what % are actually within 500m/1km/5km?
+Add to `pipeline.py` as `geocoder.calibration_report(labelled_data)`.
+Needs the human-labelled eval set first.
+
+### Map output for batch results
+`geocoder.plot_results(df)` using folium — green resolved, red unresolved, on UK basemap.
+Low effort, high communicability for non-technical stakeholders and systematic mis-snap detection.
+
 ### Human text variation test set
 Curated set of inputs that test how humans write UK locations:
 - Old/historic county names: `St Helens Lancashire` (now Merseyside), `Stockton Cleveland`, `Humberside`
@@ -102,6 +142,34 @@ a much more representative signal across thousands of real inputs.
 
 ## 💡 Ideas / longer term
 
+### Python STATS19 package
+There is no Python equivalent of the R stats19 package (Lovelace et al., JOSS 2019).
+`scripts/build_stats19_eval.py` is partway there. Minimal viable package:
+- `download_stats19(year, type)` — fetch raw CSVs from data.gov.uk
+- `read_collisions(path)` / `read_casualties()` / `read_vehicles()` — decode integer codes
+- `to_geodataframe(df)` — convert Easting/Northing to GeoDataFrame (OSGB36)
+Could be a separate repo or grow from ukgeo utility scripts.
+See `docs/gaps_and_ecosystem.md` section 6.
+
+### Chunked/streaming batch processing
+`geocode_batch()` loads all inputs into memory. Full STATS19 1979-2024 is ~2M records.
+Add a chunked generator variant: process N rows at a time, append to parquet output.
+
+### Data quality pre-screening
+`screen_inputs(texts)` — flag inputs likely to fail before running full pipeline.
+Returns quality tier: likely resolvable / uncertain / likely to fail.
+Saves time on bulk jobs and sets honest expectations.
+
+### Open Road Risk complementary tools (for reference)
+These are not ukgeo tasks but worth knowing for Open Road Risk development:
+- **PySAL/esda** — `esda.Moran` for the spatial autocorrelation TODO in Open Road Risk
+- **SHAP** — interpretability for XGBoost risk_percentile model
+- **IMD/deprivation join** — LSOA-level deprivation as covariate or post-hoc analysis
+- **momepy** — road network geometry metrics as Stage 2 XGBoost features
+- **folium/keplergl** — interactive map output for Quarto site
+- **Pyrosm** — faster alternative to Overpass API for GB-scale OSM road geometry
+See `docs/gaps_and_ecosystem.md` section 4 for detail.
+
 ### Domain config profiles
 `Geocoder(domain="road_safety")` loads preset qualifier tokens and scoring weights
 tuned for that domain. `domain="logistics"` would add `depot`, `warehouse` etc.
@@ -122,7 +190,19 @@ Add a confidence calibration plot: for inputs labelled High/Medium/Low,
 what % are actually within tolerance? Helps identify overconfident results.
 
 ### Open Road Risk integration notes
-- STATS19 collision data already flows through Open Road Risk Stage 2
-- ukgeo could replace or supplement any existing location parsing in that pipeline
-- Key fields to synthesise from: `Road_1`, `Road_2`, `Junction_Detail`, `Local_Authority_District`, `LSOA_of_Accident_Location`
-- Suggested import pattern: `from ukgeo import Geocoder` in Open Road Risk utility module
+Integration approach: **loosely coupled via CSV exchange**, not shared code or imports.
+
+ukgeo outputs: `input, lat, lon, confidence, level_resolved, match_type, notes`
+Open Road Risk reads that CSV as a location lookup table.
+
+This keeps both repos independently usable. Revisit tighter coupling only if the CSV
+exchange becomes a bottleneck (e.g. latency, schema drift, large file sizes).
+
+Key STATS19 fields to synthesise location strings from:
+`Road_1`, `Road_2`, `Junction_Detail`, `Local_Authority_District`, `LSOA_of_Accident_Location`
+
+Data path design: `Geocoder(data_dir=...)` should accept an override path so users
+who have data elsewhere (e.g. Open Road Risk data dir) don't re-download.
+Implement when the integration workflow is clearer — don't over-engineer yet.
+
+Do not assume Open Road Risk is present. Do not import from it. Do not share parquet files.

@@ -66,6 +66,7 @@ _QUALIFIER_TOKENS = {
 
 _ROAD_MOTORWAY_RE = re.compile(r"^M\d{1,3}$", re.IGNORECASE)
 _ROAD_A_RE = re.compile(r"^A\d{1,4}(\(M\))?$", re.IGNORECASE)
+_ROAD_B_RE = re.compile(r"^B\d{1,4}$", re.IGNORECASE)
 _JUNCTION_RE = re.compile(r"^J\d{1,3}$", re.IGNORECASE)
 _JUNCTION_NUM_RE = re.compile(r"^\d{1,3}$")
 
@@ -132,6 +133,7 @@ class TokenGazetteer:
         if t in self.villages:             matches.append("village")
         if _ROAD_MOTORWAY_RE.match(t):     matches.append("road_motorway")
         if _ROAD_A_RE.match(t):            matches.append("road_a")
+        if _ROAD_B_RE.match(t):            matches.append("road_b")
         if _JUNCTION_RE.match(t):          matches.append("junction")
         return matches or ["unknown"]
 
@@ -304,7 +306,7 @@ def score_candidate(
             if norm in place_upper or norm in county_upper:
                 score += weights.city_context_match
 
-        elif tk.entity_type in ("road_motorway", "road_a"):
+        elif tk.entity_type in ("road_motorway", "road_a", "road_b"):
             if norm in name_upper:
                 score += weights.road_context_match
 
@@ -482,9 +484,10 @@ def try_level2(
     # Collect context tokens by type (after fuzzy resolution)
     county_tokens = [tk for tk in tagged if tk.entity_type == "county" and not tk.is_qualifier]
     place_tokens  = [tk for tk in tagged if tk.entity_type in ("city", "town", "village") and not tk.is_qualifier]
-    all_non_qual  = [tk for tk in tagged if not tk.is_qualifier and tk.entity_type != "unknown"]
+    all_non_qual  = [tk for tk in tagged if not tk.is_qualifier and tk.entity_type not in ("unknown",)]
 
     road_unanchored = False
+    b_road_osm_used = False
     if road_ref:
         # Prefer qualifier-preceded place (e.g. "near Tadcaster") as spatial anchor
         anchor_place = next(
@@ -502,8 +505,13 @@ def try_level2(
                 place_row = place_df.row(0, named=True)
                 px, py = place_row["GEOMETRY_X"], place_row["GEOMETRY_Y"]
                 anchor_m = weights.road_place_anchor_km * 1000
+                dist_expr = (
+                    (pl.col("GEOMETRY_X") - px) ** 2
+                    + (pl.col("GEOMETRY_Y") - py) ** 2
+                ).sqrt()
+                is_b_road = road_ref.upper().startswith("B")
                 mbr_cols = {"MBR_XMIN", "MBR_YMIN", "MBR_XMAX", "MBR_YMAX"}
-                if mbr_cols.issubset(candidates_df.columns):
+                if mbr_cols.issubset(candidates_df.columns) and not is_b_road:
                     anchored = (
                         candidates_df
                         .with_columns([
@@ -517,17 +525,65 @@ def try_level2(
                         .drop(["_cx", "_cy"])
                     )
                 else:
-                    anchored = candidates_df.filter(
-                        ((pl.col("GEOMETRY_X") - px) ** 2 + (pl.col("GEOMETRY_Y") - py) ** 2).sqrt()
-                        <= anchor_m
+                    anchored = (
+                        candidates_df
+                        .with_columns(dist_expr.alias("_dist"))
+                        .filter(pl.col("_dist") <= anchor_m)
+                        .sort("_dist")
+                        .drop("_dist")
                     )
                 if not anchored.is_empty():
                     candidates_df = anchored
+                    # For B-road OSM segments: pick the closest segment to the anchor
+                    # rather than relying on score tie-breaking among equal-weight rows.
+                    has_osm_road = (
+                        is_b_road
+                        and (
+                            "OSM_ID" in candidates_df.columns
+                            or "B Road" in candidates_df["LOCAL_TYPE"].to_list()
+                        )
+                    )
+                    if has_osm_road:
+                        b_road_osm_used = True
+                        candidates_df = (
+                            anchored
+                            .with_columns(dist_expr.alias("_dist"))
+                            .filter(pl.col("LOCAL_TYPE") == "B Road")
+                            .sort("_dist")
+                            .head(1)
+                            .drop("_dist")
+                        )
                 else:
                     candidates_df = place_df
                     road_unanchored = True
 
-        # Road/junction not in OS Names — fall back to nearby place
+        elif not junction_num and near_name:
+            # candidates_df was empty (no OS Names / OSM result for road_ref).
+            # For B-roads with a place anchor, try OSM roads directly.
+            osm_segs = lookup.search_osm_roads(road_ref)
+            if not osm_segs.is_empty():
+                place_df = lookup.search_name(near_name)
+                if not place_df.is_empty():
+                    place_row = place_df.row(0, named=True)
+                    px, py = place_row["GEOMETRY_X"], place_row["GEOMETRY_Y"]
+                    anchor_m = weights.road_place_anchor_km * 1000
+                    dist_expr = (
+                        (pl.col("GEOMETRY_X") - px) ** 2
+                        + (pl.col("GEOMETRY_Y") - py) ** 2
+                    ).sqrt()
+                    closest = (
+                        osm_segs
+                        .with_columns(dist_expr.alias("_dist"))
+                        .filter(pl.col("_dist") <= anchor_m)
+                        .sort("_dist")
+                        .head(1)
+                        .drop("_dist")
+                    )
+                    if not closest.is_empty():
+                        candidates_df = closest
+                        b_road_osm_used = True
+
+        # Road/junction not in OS Names or OSM — fall back to nearby place
         if candidates_df.is_empty() and near_name:
             candidates_df = lookup.search_name(near_name)
         elif candidates_df.is_empty() and county_tokens:
@@ -673,6 +729,12 @@ def try_level2(
         notes_parts.append("junction_data=unavailable")
     if road_unanchored:
         notes_parts.append("road_section=unanchored")
+    if b_road_osm_used:
+        notes_parts.append("source=osm")
+
+    inferred_match_type = best_row["LOCAL_TYPE"].lower().replace(" ", "_")
+    if b_road_osm_used:
+        inferred_match_type = "b_road_osm"
 
     return GeoResult(
         input=text,
@@ -680,8 +742,8 @@ def try_level2(
         lon=lon,
         interpreted_as=f"{best_row['NAME1']} ({best_row['LOCAL_TYPE']})",
         match_type=(
-            partial.match_type if partial
-            else best_row["LOCAL_TYPE"].lower().replace(" ", "_")
+            partial.match_type if partial and not b_road_osm_used
+            else inferred_match_type
         ),
         level_resolved=2,
         confidence=confidence,

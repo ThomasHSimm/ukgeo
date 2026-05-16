@@ -51,20 +51,112 @@ _KEEP_COLS = [
 
 JUNCTIONS_PARQUET     = Path(__file__).parent.parent / "data" / "os_open_roads_junctions.parquet"
 OSM_JUNCTIONS_PARQUET = Path(__file__).parent.parent / "data" / "osm_named_junctions.parquet"
+OSM_ROADS_PARQUET     = Path(__file__).parent.parent / "data" / "osm_roads.parquet"
+COMBINED_PARQUET      = Path(__file__).parent.parent / "data" / "kaggle" / "ukgeo_data.parquet"
+DEFAULT_PARQUET       = Path(__file__).parent.parent / "data" / "os_open_names.parquet"
+
+_NULL_CONTEXT_COLS = [
+    pl.lit(None).cast(pl.Utf8).alias("COUNTY_UNITARY"),
+    pl.lit(None).cast(pl.Utf8).alias("DISTRICT_BOROUGH"),
+    pl.lit(None).cast(pl.Utf8).alias("POPULATED_PLACE"),
+]
+
+_MBR_COLS = ["MBR_XMIN", "MBR_YMIN", "MBR_XMAX", "MBR_YMAX"]
+
+
+def _drop_null_mbr(df: pl.DataFrame) -> pl.DataFrame:
+    """Drop MBR columns when all values are null.
+
+    The combined Kaggle parquet stores MBR columns but fills them with null
+    for sources without bounding-box data.  _filter_by_bng_extent() checks
+    for column *presence* before using them, so null-filled columns cause it
+    to return empty results instead of falling through to the GEOMETRY_X/Y
+    point-in-box path.  Dropping them restores correct fallback behaviour.
+    """
+    mbr_present = [c for c in _MBR_COLS if c in df.columns]
+    if not mbr_present:
+        return df
+    if all(df[c].is_null().all() for c in mbr_present):
+        return df.drop(mbr_present)
+    return df
 
 
 class OSNamesLookup:
     """
     Loads OS Open Names parquet and exposes query methods.
-    Optionally loads OS Open Roads junction parquet and OSM named junctions
-    parquet if present.
+
+    Prefers individual parquet files when present because they retain richer
+    metadata. Falls back to data/kaggle/ukgeo_data.parquet when users have only
+    downloaded the combined Kaggle release.
     """
 
-    def __init__(self, parquet_path: Path):
+    def __init__(self, parquet_path: Path = DEFAULT_PARQUET):
+        # Prefer individual parquets when the default OS Names file exists —
+        # they retain richer metadata (COUNTY_UNITARY, DISTRICT_BOROUGH,
+        # POPULATED_PLACE) that improves scoring.  The combined Kaggle parquet
+        # is the fallback for users who have only downloaded ukgeo_data.parquet.
+        if parquet_path == DEFAULT_PARQUET and not DEFAULT_PARQUET.exists() and COMBINED_PARQUET.exists():
+            self._load_from_combined()
+        else:
+            self._load_individual(parquet_path)
+
+        # OSM B-road way segments — prefer the richer separate parquet if present.
+        # _load_from_combined() sets this from the Kaggle slice when available.
+        if OSM_ROADS_PARQUET.exists():
+            self._osm_roads = pl.read_parquet(OSM_ROADS_PARQUET)
+        elif not hasattr(self, "_osm_roads"):
+            self._osm_roads = None
+
+    def _load_from_combined(self) -> None:
+        """Load all data slices from the combined Kaggle parquet."""
+        raw = pl.read_parquet(COMBINED_PARQUET)
+
+        # OS Open Names slice — reconstruct columns dropped for Kaggle release.
+        # Drop null MBR columns so _filter_by_bng_extent falls through to the
+        # GEOMETRY_X/Y point-in-box path rather than returning empty results.
+        os_slice = raw.filter(pl.col("SOURCE") == "os_open_names")
+        os_slice = _drop_null_mbr(os_slice)
+        self._df = os_slice.with_columns(
+            [pl.col("NAME2").fill_null("").str.to_uppercase().alias("NAME2_UPPER")]
+            + _NULL_CONTEXT_COLS
+        )
+
+        # OS Open Roads junctions slice — restore expected JUNCTION_NUMBER column
+        roads_slice = raw.filter(pl.col("SOURCE") == "os_open_roads")
+        if len(roads_slice) > 0:
+            self._junctions = _drop_null_mbr(
+                roads_slice.rename({"NAME1": "JUNCTION_NUMBER"})
+            )
+        else:
+            self._junctions = None
+
+        # OSM named junctions slice — reconstruct NAME2_UPPER and context nulls
+        osm_slice = raw.filter(pl.col("SOURCE") == "osm")
+        if len(osm_slice) > 0:
+            self._osm_junctions = _drop_null_mbr(osm_slice).with_columns(
+                [pl.col("NAME2").fill_null("").str.to_uppercase().alias("NAME2_UPPER")]
+                + _NULL_CONTEXT_COLS
+            )
+        else:
+            self._osm_junctions = None
+
+        # OSM B-road segments slice.
+        osm_roads_slice = raw.filter(pl.col("SOURCE") == "osm_roads")
+        if len(osm_roads_slice) > 0:
+            self._osm_roads = _drop_null_mbr(osm_roads_slice).with_columns(
+                [pl.col("NAME2").fill_null("").str.to_uppercase().alias("NAME2_UPPER")]
+                + _NULL_CONTEXT_COLS
+            )
+        else:
+            self._osm_roads = None
+
+    def _load_individual(self, parquet_path: Path) -> None:
+        """Load data from the original individual parquet files."""
         if not parquet_path.exists():
             raise FileNotFoundError(
                 f"OS Open Names parquet not found at {parquet_path}. "
-                "Run scripts/download_os_open_names.py first."
+                "Run scripts/download_os_open_names.py first, or place "
+                "data/kaggle/ukgeo_data.parquet for auto-detection."
             )
         self._df = pl.read_parquet(parquet_path)
 
@@ -163,7 +255,7 @@ class OSNamesLookup:
             pl.col("LOCAL_TYPE").is_in(local_types)
             & (pl.col("NAME1_UPPER") == road_upper)
         )
-        if near_name:
+        if near_name and "POPULATED_PLACE" in q.columns:
             near_upper = near_name.upper()
             q = q.with_columns(
                 pl.when(
@@ -174,7 +266,26 @@ class OSNamesLookup:
                 .otherwise(pl.col("TYPE_WEIGHT"))
                 .alias("TYPE_WEIGHT")
             )
-        return q.sort("TYPE_WEIGHT", descending=True).head(20)
+        osm_roads = self.search_osm_roads(road_upper)
+        if not osm_roads.is_empty() and len(q) < 3:
+            q = pl.concat([q, osm_roads], how="diagonal") if not q.is_empty() else osm_roads
+        return q.sort("TYPE_WEIGHT", descending=True).head(50)
+
+    def search_osm_roads(self, road_ref: str) -> pl.DataFrame:
+        """
+        Return OSM B-road way-segment rows whose NAME1_UPPER exactly matches
+        road_ref. Returns an empty DataFrame if osm_roads.parquet is not loaded.
+        Column schema is compatible with search_road() and try_level2().
+        """
+        if self._osm_roads is None:
+            return pl.DataFrame()
+        ref_upper = road_ref.upper().strip()
+        return (
+            self._osm_roads
+            .filter(pl.col("NAME1_UPPER") == ref_upper)
+            .sort("TYPE_WEIGHT", descending=True)
+            .head(50)
+        )
 
     def search_osm_junctions(
         self,

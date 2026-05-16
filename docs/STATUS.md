@@ -2,7 +2,7 @@
 
 ## Test Suite
 
-**38 passed, 5 xfailed** (as of 2026-05-16)
+**40 passed, 6 xfailed** (as of 2026-05-16)
 
 All substantive test cases pass. The 5 `xfail` entries are documented known gaps, not regressions.
 
@@ -51,18 +51,20 @@ These are documented known gaps tracked as regression guards, not failures:
 | `Bradford Cornwall` | Spatial contradiction suppression not strong enough for short city names |
 | `Dartford Yorkshire` | Same |
 | Lofthouse old ground-truth `(53.7617, -1.542)` | Original test coordinates were ~4.5 km from the actual M62/M1 interchange; updated in test suite to `(53.732, -1.521)` |
+| `B1224 York` | B1224 runs Harrogate→York direction; closest OSM segment resolves ~11km west of York city centre because the road itself does not pass through York |
 
 ---
 
 ## Data Sources
 
-All three parquet files must be present in `data/` before running tests.
+The first three parquet files are required; the OSM roads file is optional but strongly recommended.
 
 | File | Size | Source | Script |
 |---|---|---|---|
 | `os_open_names.parquet` | ~39 MB | OS Open Names (OGL) | `scripts/download_os_open_names.py` |
 | `os_open_roads_junctions.parquet` | ~3 MB | OS Open Roads (OGL) | `scripts/download_os_open_roads.py` |
 | `osm_named_junctions.parquet` | ~1.3 MB | OpenStreetMap (ODbL) | `scripts/download_osm_named_junctions.py` |
+| `osm_roads.parquet` | ~6 MB | OpenStreetMap (ODbL) | `scripts/download_osm_roads.py` |
 
 ### Regenerating data
 

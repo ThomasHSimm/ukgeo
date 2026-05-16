@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(conda activate *)",
+      "Bash(python3 -c \"import polars; print\\('polars ok'\\)\")",
+      "Bash(/home/tsispace/miniconda3/envs/env1/bin/python3 -c ' *)",
+      "Bash(/home/tsispace/miniconda3/envs/env1/bin/python3 -m pytest tests/test_pipeline.py -x -q)"
+    ]
+  }
+}

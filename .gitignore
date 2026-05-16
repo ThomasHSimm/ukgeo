@@ -2,6 +2,9 @@
 data/*.parquet
 data/*.csv
 
+# Kaggle release files (large parquet + metadata)
+data/kaggle/
+
 # Calibrated weights are user-specific, not committed by default
 # Remove this line if you want to share weights in the repo
 config/weights.yaml

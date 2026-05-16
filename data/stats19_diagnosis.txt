@@ -1,0 +1,72 @@
+STATS19 Benchmark Diagnosis — ukgeo
+=====================================
+Generated: 2026-05-16
+Dataset: 2024 STATS19 collision data (100,927 rows → 37,174 after filtering → 5,000 sampled)
+
+--- Part 1: Unresolved breakdown ---
+
+Total:        5000
+Resolved:     3447 (68.9%)
+Unresolved:   1553 (31.1%)
+
+Unresolved by road type:
+  B-road:      1550 (99.8% of unresolved)
+  A-road:         3  (0.2%)
+  Motorway:       0  (0.0%)
+  Other:          0  (0.0%)
+
+Top 20 most common unresolved road references:
+  B4114: 12,  B4100: 8,  B1040: 8,  B2028: 8,  B6004: 8,
+  B1108: 7,  B3073: 6,  B4217: 6,  B6159: 6,  B4006: 6,
+  B3183: 6,  B3068: 6,  B1393: 6,  B507: 6,  B452: 6,
+  B4124: 6,  B1398: 5,  B6194: 5,  B4632: 5,  B165: 5
+
+B-road resolution rate (before fix): 83/1633 = 5.1%
+  (The 5.1% that resolve are cases where B-road ref coincidentally matches a
+   place token through the place-name path, or the junction label resolves independently)
+
+Root cause: Level 1 regex does not extract B-road references (only M and A-roads).
+In Level 2, B-road tokens are tagged "unknown" and excluded from the road-ref
+lookup path. Since all_non_qual excludes "unknown" tokens, primary_tk is None
+for pure B-road inputs, and try_level2 returns None.
+
+--- Part 2: OS Open Names B-road coverage ---
+
+Total B-road entries in OS Open Names (NAME1_UPPER matches ^B\d+$): 3,299
+  All classified as: Numbered Road (3,299)
+
+Coverage of top 23 unresolved B-roads: 23/23 found in OS Open Names
+
+BUT: OS Open Names has exactly 1 entry per B-road (a national road centroid),
+not geographic segments. For inputs like "B6265 Bradford":
+  - B6265 OS Names centroid = BNG (418557, 465128) ≈ 33 km from Bradford
+  - road_place_anchor_km = 20 km → centroid is filtered out
+  - Result: falls back to Bradford city centre only (or unresolved if no place context)
+
+Conclusion: OS Open Names has limited B-road spatial coverage: exactly 1 centroid
+per road number. For roads that span wide geographic areas, the single centroid
+fails the 20-km spatial filter when a place anchor is present. OSM road data
+provides multiple segment centroids spread along each road's actual route,
+giving much better spatial resolution for place-anchored B-road queries.
+
+--- Post-integration results will be appended after OSM road data integration ---
+
+--- Post-integration results (after OSM road data) ---
+
+OSM road data: 105,720 B-road way segments, 3,390 unique B-road refs
+Integration: B-road regex added to Level 1; road_b token type added to Level 2;
+             search_road() augmented with OSM segments when OS Names returns < 3 results;
+             try_level2() picks closest OSM segment to anchor place.
+
+STATS19 Benchmark — before/after OSM roads integration
+=======================================================
+                           Before    After    Change
+Resolved:                  68.9%    99.9%    +31.0%
+Median error:              4593m    3299m    -1293m
+Within 5km:                51.6%    59.9%     +8.4%
+B-roads resolved:           5.1%    99.9%    +94.9%
+
+Remaining 0.1% unresolved: 4 inputs — likely non-GB B-road references
+(B108 in Northern Ireland, B64 in Northern Ireland, etc.) that are outside
+the GB bounding box used for OSM road data, or references with no matching
+OSM way in the dataset.

@@ -27,6 +27,9 @@ _MOTORWAY = re.compile(r"\bM(\d{1,3})\b", re.IGNORECASE)
 # A-road (including motorway-standard): A1, A647, A1(M)
 _AROAD = re.compile(r"\bA(\d{1,4})(\(M\))?(?=\W|$)", re.IGNORECASE)
 
+# B-road: B1, B6265, B4114 etc.
+_BROAD = re.compile(r"\bB(\d{1,4})\b", re.IGNORECASE)
+
 # Junction number following a road reference: J26, Junction 26, junction 47
 _JUNCTION = re.compile(r"\b(?:J|junction)\s*(\d{1,3})\b", re.IGNORECASE)
 
@@ -90,16 +93,18 @@ def try_level1(text: str) -> Optional[GeoResult]:
     # We return None so Level 2 gets the structured road entities,
     # but we annotate what we found for pipeline visibility.
     motorway = _MOTORWAY.search(upper)
-    aroad = _AROAD.search(upper)
+    aroad    = _AROAD.search(upper)
+    broad    = _BROAD.search(upper)
     junction = _JUNCTION.search(upper)
 
-    if motorway or aroad:
-        # Pass road metadata downstream via notes — Level 2 will use these
+    if motorway or aroad or broad:
         junc_num = junction.group(1) if junction else None
-        road_ref = (
-            f"M{motorway.group(1)}" if motorway
-            else f"A{aroad.group(1)}{aroad.group(2) or ''}"
-        )
+        if motorway:
+            road_ref = f"M{motorway.group(1)}"
+        elif aroad:
+            road_ref = f"A{aroad.group(1)}{aroad.group(2) or ''}"
+        else:
+            road_ref = f"B{broad.group(1)}"
         return GeoResult(
             input=text,
             interpreted_as=f"{road_ref}" + (f" J{junc_num}" if junc_num else ""),

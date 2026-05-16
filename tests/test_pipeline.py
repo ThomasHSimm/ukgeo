@@ -265,6 +265,34 @@ def test_batch(geo):
     resolved = df.filter(df["lat"].is_not_null())
     assert len(resolved) >= len(inputs) * 0.8, "Less than 80% resolved in batch"
 
+B_ROAD_CASES = [
+    # B-road + local authority context — should resolve within 10km
+    ("B6265 Bradford",    53.7950, -1.7594, 10000, "Medium"),
+    pytest.param(
+        "B1224 York", 53.9590, -1.0815, 10000, "Medium",
+        marks=pytest.mark.xfail(
+            strict=True,
+            reason=(
+                "B1224 runs between Harrogate and York; closest OSM segment resolves "
+                "~11km west of York city centre because the road itself is not in York."
+            ),
+        ),
+    ),
+    ("B6113 Huddersfield", 53.6458, -1.7850, 10000, "Medium"),
+]
+
+@pytest.mark.parametrize("inp,true_lat,true_lon,tol_m,min_conf", B_ROAD_CASES)
+def test_b_road_cases(geo, inp, true_lat, true_lon, tol_m, min_conf):
+    result = geo.geocode(inp)
+    _assert_resolved_finite(result, inp)
+    dist = _haversine(true_lat, true_lon, result.lat, result.lon)
+    assert dist <= tol_m, (
+        f"{inp!r}: {dist:.0f}m error (tolerance {tol_m}m) — "
+        f"got {result.lat},{result.lon}"
+    )
+    _assert_min_confidence(result, inp, min_conf)
+
+
 def test_empty_input(geo):
     r = geo.geocode("")
     assert not r.resolved
