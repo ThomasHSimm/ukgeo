@@ -89,6 +89,10 @@ class Geocoder:
         result = try_level1(text)
         if result and result.resolved:
             return result
+        if result and result.match_type == "postcode":
+            local_postcode = self._try_local_postcode(result)
+            if local_postcode and local_postcode.resolved:
+                return local_postcode
 
         # Level 2 — OS Names token scoring
         if self._max_level >= 2:
@@ -115,6 +119,37 @@ class Geocoder:
             confidence="Low",
             level_resolved=None,
             notes="unresolved after all levels",
+        )
+
+    def _try_local_postcode(self, result: GeoResult) -> Optional[GeoResult]:
+        """Fallback to OS Open Names postcode rows when postcodes.io is unavailable."""
+        if not result.interpreted_as:
+            return None
+        postcode = (
+            result.interpreted_as
+            .removeprefix("Postcode ")
+            .split(" (", 1)[0]
+            .strip()
+        )
+        if not postcode:
+            return None
+
+        candidates = self._lookup.search_name(postcode, local_types=["Postcode"], limit=1)
+        if candidates.is_empty():
+            return None
+
+        row = candidates.row(0, named=True)
+        lat, lon = self._lookup.bng_to_wgs84(row["GEOMETRY_X"], row["GEOMETRY_Y"])
+        return GeoResult(
+            input=result.input,
+            lat=lat,
+            lon=lon,
+            interpreted_as=f"Postcode {row['NAME1']}",
+            match_type="postcode",
+            level_resolved=2,
+            confidence="High",
+            candidates_considered=len(candidates),
+            notes="OS Open Names postcode fallback; postcodes.io unavailable",
         )
 
     # ------------------------------------------------------------------

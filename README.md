@@ -137,9 +137,9 @@ The following are documented gaps in the current implementation, tracked as issu
 pytest -v
 ```
 
-Tests require the OS Open Names parquet to be present (skip otherwise). The 15 test cases cover postcodes, motorway junctions, A-roads, named interchanges, colloquial names, place names, and typos.
+Tests require the OS Open Names parquet to be present (skip otherwise). The suite covers postcodes, motorway junctions, A-roads, named interchanges, road-suffix abbreviations, `St`/`Saint` ambiguity, colloquial county context, bad county context, place-name typos, and batch geocoding.
 
-Current pass rate: 12/18 edge cases
+Known gaps are documented with strict `xfail` regression cases rather than being counted as ordinary failures.
 
 ## Project structure
 

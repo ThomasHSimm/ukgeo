@@ -214,36 +214,103 @@ class OSNamesLookup:
         Approximate BNG (OSGB36) to WGS84 conversion.
         Accurate to ~5m — sufficient for geocoding purposes.
         """
-        # Helmert transformation parameters (OSTN02 approximation)
-        a, b = 6377563.396, 6356256.909
-        F0 = 0.9996012717
-        lat0, lon0 = 49.0 * 3.14159265 / 180, -2.0 * 3.14159265 / 180
-        N0, E0 = -100000.0, 400000.0
-        e2 = 1 - (b / a) ** 2
-        n = (a - b) / (a + b)
-
-        lat = lat0
-        M = 0.0
-        for _ in range(100):
-            lat = (northing - N0 - M) / (a * F0) + lat
-            M = (b * F0 * (
-                (1 + n + 5/4 * n**2 + 5/4 * n**3) * (lat - lat0)
-                - (3*n + 3*n**2 + 21/8 * n**3) * 2 * (lat - lat0) / 2  # simplified
-            ))
-            if abs(northing - N0 - M) < 0.001:
-                break
-
-        # Simplified direct formula (sufficient accuracy for geocoding)
         import math
-        lat_r = math.atan2(northing - N0, easting - E0) + lat0
+
+        if not math.isfinite(easting) or not math.isfinite(northing):
+            return math.nan, math.nan
+
         # Use pyproj if available for better accuracy, else approximate
         try:
             from pyproj import Transformer
             t = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
             lon_wgs, lat_wgs = t.transform(easting, northing)
-            return round(lat_wgs, 6), round(lon_wgs, 6)
+            if math.isfinite(lat_wgs) and math.isfinite(lon_wgs):
+                return round(lat_wgs, 6), round(lon_wgs, 6)
         except ImportError:
-            # Fallback: rough linear approximation (error ~100m, acceptable for Level 2)
-            lat_wgs = 49.0 + (northing - 0) / 111320
-            lon_wgs = -7.5 + (easting - 0) / 65000
-            return round(lat_wgs, 5), round(lon_wgs, 5)
+            pass
+
+        return _bng_to_wgs84_fallback(easting, northing)
+
+
+def _bng_to_wgs84_fallback(easting: float, northing: float) -> tuple[float, float]:
+    """Convert OSGB36 / British National Grid eastings/northings to WGS84."""
+    import math
+
+    # Airy 1830 ellipsoid and National Grid projection constants.
+    a, b = 6377563.396, 6356256.909
+    f0 = 0.9996012717
+    lat0, lon0 = math.radians(49.0), math.radians(-2.0)
+    n0, e0 = -100000.0, 400000.0
+    e2 = 1 - (b * b) / (a * a)
+    n = (a - b) / (a + b)
+
+    lat = lat0
+    meridional_arc = 0.0
+    while abs(northing - n0 - meridional_arc) >= 0.00001:
+        lat = (northing - n0 - meridional_arc) / (a * f0) + lat
+        ma = (1 + n + 5 / 4 * n**2 + 5 / 4 * n**3) * (lat - lat0)
+        mb = (3 * n + 3 * n**2 + 21 / 8 * n**3) * math.sin(lat - lat0) * math.cos(lat + lat0)
+        mc = (15 / 8 * n**2 + 15 / 8 * n**3) * math.sin(2 * (lat - lat0)) * math.cos(2 * (lat + lat0))
+        md = 35 / 24 * n**3 * math.sin(3 * (lat - lat0)) * math.cos(3 * (lat + lat0))
+        meridional_arc = b * f0 * (ma - mb + mc - md)
+
+    sin_lat = math.sin(lat)
+    cos_lat = math.cos(lat)
+    tan_lat = math.tan(lat)
+    nu = a * f0 / math.sqrt(1 - e2 * sin_lat**2)
+    rho = a * f0 * (1 - e2) / (1 - e2 * sin_lat**2) ** 1.5
+    eta2 = nu / rho - 1
+    d_e = easting - e0
+
+    vii = tan_lat / (2 * rho * nu)
+    viii = tan_lat / (24 * rho * nu**3) * (5 + 3 * tan_lat**2 + eta2 - 9 * tan_lat**2 * eta2)
+    ix = tan_lat / (720 * rho * nu**5) * (61 + 90 * tan_lat**2 + 45 * tan_lat**4)
+    x = 1 / (cos_lat * nu)
+    xi = 1 / (cos_lat * 6 * nu**3) * (nu / rho + 2 * tan_lat**2)
+    xii = 1 / (cos_lat * 120 * nu**5) * (5 + 28 * tan_lat**2 + 24 * tan_lat**4)
+    xiia = 1 / (cos_lat * 5040 * nu**7) * (
+        61 + 662 * tan_lat**2 + 1320 * tan_lat**4 + 720 * tan_lat**6
+    )
+
+    lat_osgb = lat - vii * d_e**2 + viii * d_e**4 - ix * d_e**6
+    lon_osgb = lon0 + x * d_e - xi * d_e**3 + xii * d_e**5 - xiia * d_e**7
+
+    return _osgb36_latlon_to_wgs84(lat_osgb, lon_osgb, a, b)
+
+
+def _osgb36_latlon_to_wgs84(
+    lat: float,
+    lon: float,
+    osgb_a: float,
+    osgb_b: float,
+) -> tuple[float, float]:
+    """Apply the standard Helmert transform from OSGB36 to WGS84."""
+    import math
+
+    osgb_e2 = 1 - (osgb_b * osgb_b) / (osgb_a * osgb_a)
+    nu = osgb_a / math.sqrt(1 - osgb_e2 * math.sin(lat) ** 2)
+
+    x1 = nu * math.cos(lat) * math.cos(lon)
+    y1 = nu * math.cos(lat) * math.sin(lon)
+    z1 = (1 - osgb_e2) * nu * math.sin(lat)
+
+    tx, ty, tz = 446.448, -125.157, 542.060
+    s = 20.4894 * 1e-6
+    rx, ry, rz = (math.radians(v / 3600) for v in (0.1502, 0.2470, 0.8421))
+
+    x2 = tx + (1 + s) * x1 - rz * y1 + ry * z1
+    y2 = ty + rz * x1 + (1 + s) * y1 - rx * z1
+    z2 = tz - ry * x1 + rx * y1 + (1 + s) * z1
+
+    wgs_a, wgs_b = 6378137.000, 6356752.3141
+    wgs_e2 = 1 - (wgs_b * wgs_b) / (wgs_a * wgs_a)
+    p = math.sqrt(x2**2 + y2**2)
+    lat_wgs = math.atan2(z2, p * (1 - wgs_e2))
+    previous = 0.0
+    while abs(lat_wgs - previous) > 1e-12:
+        previous = lat_wgs
+        nu = wgs_a / math.sqrt(1 - wgs_e2 * math.sin(lat_wgs) ** 2)
+        lat_wgs = math.atan2(z2 + wgs_e2 * nu * math.sin(lat_wgs), p)
+    lon_wgs = math.atan2(y2, x2)
+
+    return round(math.degrees(lat_wgs), 6), round(math.degrees(lon_wgs), 6)
