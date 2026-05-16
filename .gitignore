@@ -23,8 +23,22 @@ env/
 .ruff_cache/
 .pytest_cache/
 
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local AI/editor agent state
+.agents/
+.codex/
+.code-review-graph/
+.mcp.json
+.claude/*
+!.claude/settings.json
+
 # OS / editor
 .DS_Store
 .idea/
 .vscode/
+.ipynb_checkpoints/
 *.swp
