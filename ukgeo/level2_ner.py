@@ -35,12 +35,16 @@ class ScoringWeights:
     # Confidence thresholds (on normalised 0-1 score)
     # These are intentionally low — normalisation denominator is a theoretical
     # maximum; real scores cluster in 0.1-0.4 range for correct matches.
-    high_threshold: float = 0.25
+    high_threshold: float = 0.15
     medium_threshold: float = 0.10
 
     # Fuzzy matching
     fuzzy_cutoff: float = 0.75      # difflib cutoff for close matches
     fuzzy_confidence_cap: str = "Medium"  # fuzzy matches never exceed this
+
+    # Road-place anchor: filter road sections to those within this distance (km)
+    # of the place token when a road ref is present alongside a place name.
+    road_place_anchor_km: float = 20.0
 
     # Domain-specific words to treat as context/qualifiers rather than places
     extra_qualifiers: list[str] = field(default_factory=list)
@@ -65,6 +69,9 @@ _ROAD_A_RE = re.compile(r"^A\d{1,4}(\(M\))?$", re.IGNORECASE)
 _JUNCTION_RE = re.compile(r"^J\d{1,3}$", re.IGNORECASE)
 _JUNCTION_NUM_RE = re.compile(r"^\d{1,3}$")
 
+# Qualifier words that signal the input may name a junction/interchange/roundabout
+_JUNCTION_HINT_QUALIFIERS = {"interchange", "junction", "roundabout"}
+
 
 @dataclass
 class TaggedToken:
@@ -75,6 +82,7 @@ class TaggedToken:
     ambiguous: bool = False
     preceded_by_qualifier: bool = False
     fuzzy_match: bool = False
+    fuzzy_resolved: Optional[str] = None  # uppercased gazetteer name used for search
 
 
 # ---------------------------------------------------------------------------
@@ -178,26 +186,19 @@ def tag_tokens(
     gazetteer: TokenGazetteer,
     weights: ScoringWeights,
 ) -> list[TaggedToken]:
+    """Pass 1: exact tagging only — no fuzzy. Call _apply_fuzzy_tokens() for pass 2."""
     tagged = []
     prev_qualifier = False
     qualifier_tokens = _QUALIFIER_TOKENS | {
         token.lower() for token in weights.extra_qualifiers
     }
     for raw in tokens:
-        # Restore underscores → spaces for display/matching
         norm = raw.upper().replace("_", " ")
         is_qual = norm.lower() in qualifier_tokens
-        types = gazetteer.tag(norm)  # tag on restored form
-        fuzzy = False
+        types = gazetteer.tag(norm)
 
         if _JUNCTION_NUM_RE.match(norm) and prev_qualifier:
             types = ["junction"]
-
-        if types == ["unknown"] and not is_qual:
-            fuzzy_match = gazetteer.fuzzy_tag(norm, cutoff=weights.fuzzy_cutoff)
-            if fuzzy_match:
-                types = gazetteer.tag(fuzzy_match)
-                fuzzy = True
 
         tagged.append(TaggedToken(
             raw=raw.replace("_", " "),
@@ -206,10 +207,57 @@ def tag_tokens(
             is_qualifier=is_qual,
             ambiguous=len(types) > 1,
             preceded_by_qualifier=prev_qualifier,
-            fuzzy_match=fuzzy,
         ))
         prev_qualifier = is_qual
     return tagged
+
+
+def _county_name_set(
+    lookup: "OSNamesLookup",
+    county_token: str,
+) -> Optional[set[str]]:
+    """Return NAME1_UPPER values from lookup._df within the county's BNG extent."""
+    extent = ADMIN_BNG_EXTENTS.get(resolve_alias(county_token))
+    if extent is None:
+        return None
+    county_df = _filter_by_bng_extent(lookup._df, extent)
+    return set(county_df["NAME1_UPPER"].to_list())
+
+
+def _apply_fuzzy_tokens(
+    tagged: list[TaggedToken],
+    gazetteer: TokenGazetteer,
+    weights: ScoringWeights,
+    county_names: Optional[set[str]] = None,
+) -> None:
+    """
+    Pass 2: apply fuzzy matching in-place only when ALL of:
+      - the token is unknown and not a qualifier
+      - no city/town/village token already exists in the tagged list
+    Uses county_names (county-scoped set) when available, else the global
+    all_places set, so "Brafford" + "West Yorkshire" resolves to "Bradford"
+    rather than the phonetically-closer but geographically-wrong "Rafford".
+    """
+    _PLACE_TYPES = {"city", "town", "village"}
+    has_place_token = any(
+        tk.entity_type in _PLACE_TYPES and not tk.is_qualifier
+        for tk in tagged
+    )
+    if has_place_token:
+        return
+
+    name_set = county_names if county_names is not None else gazetteer.all_places
+
+    for tk in tagged:
+        if tk.entity_type == "unknown" and not tk.is_qualifier:
+            matches = get_close_matches(tk.normalised, name_set, n=1, cutoff=weights.fuzzy_cutoff)
+            if matches:
+                fuzzy_name = matches[0]
+                types = gazetteer.tag(fuzzy_name)
+                tk.entity_type = types[0]
+                tk.ambiguous = len(types) > 1
+                tk.fuzzy_match = True
+                tk.fuzzy_resolved = fuzzy_name
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +275,7 @@ def score_candidate(
     district_upper = (row.get("DISTRICT_BOROUGH") or "").upper()
     place_upper    = (row.get("POPULATED_PLACE") or "").upper()
     name_upper     = (row.get("NAME1_UPPER") or "")
+    name2_upper    = (row.get("NAME2_UPPER") or "")
 
     for tk in tagged:
         norm = tk.normalised
@@ -262,6 +311,12 @@ def score_candidate(
         elif tk.entity_type == "junction":
             if norm in name_upper:
                 score += weights.junction_match
+
+        elif tk.entity_type == "unknown" and not tk.is_qualifier:
+            # Named junction/roundabout candidates: reward when the unrecognised
+            # token (e.g. "Spaghetti", "Magic") appears in the candidate's name or alt_name.
+            if norm in name_upper or norm in name2_upper:
+                score += weights.city_context_match
 
         if tk.preceded_by_qualifier:
             score += weights.near_qualifier
@@ -403,7 +458,15 @@ def try_level2(
     if not tokens:
         return None
 
+    # Pass 1: exact tagging
     tagged = tag_tokens(tokens, gazetteer, weights)
+
+    # Derive county context before pass 2 so fuzzy can be county-scoped
+    county_tokens_pre = [tk for tk in tagged if tk.entity_type == "county" and not tk.is_qualifier]
+    county_names = _county_name_set(lookup, county_tokens_pre[0].normalised) if county_tokens_pre else None
+
+    # Pass 2: county-aware fuzzy for sole unknown place tokens
+    _apply_fuzzy_tokens(tagged, gazetteer, weights, county_names)
     fuzzy_used = any(tk.fuzzy_match for tk in tagged)
 
     # Extract road ref + junction from Level 1 partial
@@ -416,14 +479,54 @@ def try_level2(
             if part.startswith("junction="):
                 junction_num = part.split("=", 1)[1]
 
-    # Collect context tokens by type
+    # Collect context tokens by type (after fuzzy resolution)
     county_tokens = [tk for tk in tagged if tk.entity_type == "county" and not tk.is_qualifier]
     place_tokens  = [tk for tk in tagged if tk.entity_type in ("city", "town", "village") and not tk.is_qualifier]
     all_non_qual  = [tk for tk in tagged if not tk.is_qualifier and tk.entity_type != "unknown"]
 
+    road_unanchored = False
     if road_ref:
-        near_name = place_tokens[0].raw if place_tokens else None
+        # Prefer qualifier-preceded place (e.g. "near Tadcaster") as spatial anchor
+        anchor_place = next(
+            (tk for tk in place_tokens if tk.preceded_by_qualifier),
+            place_tokens[0] if place_tokens else None,
+        )
+        near_name = anchor_place.raw if anchor_place else None
         candidates_df = lookup.search_road(road_ref, junction_num=junction_num, near_name=near_name)
+
+        # Place-anchor filtering: when road + place present but no junction,
+        # restrict road candidates to those within road_place_anchor_km of the place.
+        if not candidates_df.is_empty() and near_name and not junction_num:
+            place_df = lookup.search_name(near_name)
+            if not place_df.is_empty():
+                place_row = place_df.row(0, named=True)
+                px, py = place_row["GEOMETRY_X"], place_row["GEOMETRY_Y"]
+                anchor_m = weights.road_place_anchor_km * 1000
+                mbr_cols = {"MBR_XMIN", "MBR_YMIN", "MBR_XMAX", "MBR_YMAX"}
+                if mbr_cols.issubset(candidates_df.columns):
+                    anchored = (
+                        candidates_df
+                        .with_columns([
+                            ((pl.col("MBR_XMIN") + pl.col("MBR_XMAX")) / 2).alias("_cx"),
+                            ((pl.col("MBR_YMIN") + pl.col("MBR_YMAX")) / 2).alias("_cy"),
+                        ])
+                        .filter(
+                            ((pl.col("_cx") - px) ** 2 + (pl.col("_cy") - py) ** 2).sqrt()
+                            <= anchor_m
+                        )
+                        .drop(["_cx", "_cy"])
+                    )
+                else:
+                    anchored = candidates_df.filter(
+                        ((pl.col("GEOMETRY_X") - px) ** 2 + (pl.col("GEOMETRY_Y") - py) ** 2).sqrt()
+                        <= anchor_m
+                    )
+                if not anchored.is_empty():
+                    candidates_df = anchored
+                else:
+                    candidates_df = place_df
+                    road_unanchored = True
+
         # Road/junction not in OS Names — fall back to nearby place
         if candidates_df.is_empty() and near_name:
             candidates_df = lookup.search_name(near_name)
@@ -438,7 +541,9 @@ def try_level2(
         )
         if primary_tk is None:
             return None
-        candidates_df = lookup.search_name(primary_tk.raw)
+        # Use fuzzy-resolved name when available (e.g. "BRADFORD" for "Brafford")
+        primary_name = primary_tk.fuzzy_resolved or primary_tk.raw
+        candidates_df = lookup.search_name(primary_name)
 
     if candidates_df.is_empty():
         return None
@@ -447,6 +552,100 @@ def try_level2(
     # or MBR overlaps — use NAME1_UPPER containment as a soft pre-filter
     # (hard filter done in filter_by_admin_context)
     candidates_df = filter_by_admin_context(candidates_df, tagged)
+
+    # OSM named-junction augmentation (non-road path only).
+    # Triggered when junction-hint qualifiers are present (e.g. "interchange",
+    # "junction", "roundabout") to catch named junctions absent from OS Names.
+    # OSM candidates bypass the city-name filter above but get spatial
+    # filtering against any place context tokens.
+    if not road_ref:
+        has_junction_hint = any(
+            tk.is_qualifier and tk.normalised.lower() in _JUNCTION_HINT_QUALIFIERS
+            for tk in tagged
+        )
+        if has_junction_hint:
+            unknown_non_qual = [
+                tk for tk in tagged
+                if tk.entity_type == "unknown" and not tk.is_qualifier
+            ]
+            # Only search OSM when there are unknown tokens (e.g. "Spaghetti").
+            # If all non-qualifier tokens are already resolved place names
+            # (e.g. "Lofthouse Interchange"), OS Names gives the right answer.
+            if unknown_non_qual:
+                osm_pool = pl.DataFrame()
+                for otk in unknown_non_qual:
+                    res = lookup.search_osm_junctions(otk.raw)
+                    if not res.is_empty():
+                        osm_pool = pl.concat([osm_pool, res]) if not osm_pool.is_empty() else res
+
+                if not osm_pool.is_empty():
+                    # Spatially filter to candidates near the place context.
+                    # If no candidates pass the spatial filter, discard OSM results
+                    # entirely rather than falling back to a geographically wrong match.
+                    osm_filtered = pl.DataFrame()
+                    if place_tokens:
+                        anchor_tk = next(
+                            (tk for tk in place_tokens if tk.preceded_by_qualifier),
+                            place_tokens[0],
+                        )
+                        place_df = lookup.search_name(anchor_tk.fuzzy_resolved or anchor_tk.raw)
+                        if not place_df.is_empty():
+                            pr = place_df.row(0, named=True)
+                            px, py = pr["GEOMETRY_X"], pr["GEOMETRY_Y"]
+                            anchor_m = weights.road_place_anchor_km * 1000
+                            dist_expr = (
+                                (pl.col("GEOMETRY_X") - px) ** 2
+                                + (pl.col("GEOMETRY_Y") - py) ** 2
+                            ).sqrt()
+                            spatial = osm_pool.with_columns(
+                                dist_expr.alias("_dist_to_anchor")
+                            ).filter(pl.col("_dist_to_anchor") <= anchor_m)
+                            if not spatial.is_empty():
+                                # Pick the candidate closest to the anchor place
+                                osm_filtered = (
+                                    spatial.sort("_dist_to_anchor")
+                                    .head(1)
+                                    .drop("_dist_to_anchor")
+                                )
+                                # Bridge: if the OSM entry's formal name ends with a
+                                # structural suffix (e.g. "Gravelly Hill Interchange"),
+                                # look up the base geographic name in OS Names instead —
+                                # OS Names has precise centroid coords for the suburb/place.
+                                _STRUCTURAL_SUFFIXES = (
+                                    " Interchange", " Junction", " Motorway Junction",
+                                )
+                                osm_name1 = osm_filtered["NAME1"][0] or ""
+                                for _suf in _STRUCTURAL_SUFFIXES:
+                                    if osm_name1.upper().endswith(_suf.upper()):
+                                        _base = osm_name1[: -len(_suf)].strip()
+                                        _bridged = lookup.search_name(_base)
+                                        if not _bridged.is_empty():
+                                            _near_bridged = _bridged.filter(
+                                                (
+                                                    (pl.col("GEOMETRY_X") - px) ** 2
+                                                    + (pl.col("GEOMETRY_Y") - py) ** 2
+                                                ).sqrt()
+                                                <= anchor_m
+                                            )
+                                            if not _near_bridged.is_empty():
+                                                # Boost TYPE_WEIGHT above OSM node score
+                                                # so the OS Names centroid wins in scoring
+                                                osm_filtered = (
+                                                    _near_bridged.with_columns(
+                                                        pl.lit(11).cast(pl.Int8).alias("TYPE_WEIGHT")
+                                                    )
+                                                    .head(1)
+                                                )
+                                        break
+                    else:
+                        osm_filtered = osm_pool
+
+                    if not osm_filtered.is_empty():
+                        candidates_df = (
+                            pl.concat([candidates_df, osm_filtered], how="diagonal")
+                            if not candidates_df.is_empty()
+                            else osm_filtered
+                        )
 
     # Score each candidate
     max_score = max_possible_score(tagged, weights)
@@ -472,6 +671,8 @@ def try_level2(
         notes_parts.append("fuzzy=true")
     if road_ref and junction_num:
         notes_parts.append("junction_data=unavailable")
+    if road_unanchored:
+        notes_parts.append("road_section=unanchored")
 
     return GeoResult(
         input=text,

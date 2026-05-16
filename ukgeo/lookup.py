@@ -49,13 +49,15 @@ _KEEP_COLS = [
 ]
 
 
-JUNCTIONS_PARQUET = Path(__file__).parent.parent / "data" / "os_open_roads_junctions.parquet"
+JUNCTIONS_PARQUET     = Path(__file__).parent.parent / "data" / "os_open_roads_junctions.parquet"
+OSM_JUNCTIONS_PARQUET = Path(__file__).parent.parent / "data" / "osm_named_junctions.parquet"
 
 
 class OSNamesLookup:
     """
     Loads OS Open Names parquet and exposes query methods.
-    Optionally loads OS Open Roads junction parquet if present.
+    Optionally loads OS Open Roads junction parquet and OSM named junctions
+    parquet if present.
     """
 
     def __init__(self, parquet_path: Path):
@@ -66,11 +68,17 @@ class OSNamesLookup:
             )
         self._df = pl.read_parquet(parquet_path)
 
-        # Load junction data if available
+        # OS Open Roads junction lookup (numbered junctions)
         if JUNCTIONS_PARQUET.exists():
             self._junctions = pl.read_parquet(JUNCTIONS_PARQUET)
         else:
             self._junctions = None
+
+        # OSM named junctions / roundabouts (named interchanges etc.)
+        if OSM_JUNCTIONS_PARQUET.exists():
+            self._osm_junctions = pl.read_parquet(OSM_JUNCTIONS_PARQUET)
+        else:
+            self._osm_junctions = None
 
     @property
     def size(self) -> int:
@@ -149,10 +157,11 @@ class OSNamesLookup:
                 ])
 
         # --- Fallback: OS Names road rows ---
+        # Use exact equality to prevent "A64" from matching "A640", "A641" etc.
         local_types = ["Motorway", "Numbered Road", "Named Road"]
         q = self._df.filter(
             pl.col("LOCAL_TYPE").is_in(local_types)
-            & pl.col("NAME1_UPPER").str.contains(road_upper, literal=True)
+            & (pl.col("NAME1_UPPER") == road_upper)
         )
         if near_name:
             near_upper = near_name.upper()
@@ -166,6 +175,39 @@ class OSNamesLookup:
                 .alias("TYPE_WEIGHT")
             )
         return q.sort("TYPE_WEIGHT", descending=True).head(20)
+
+    def search_osm_junctions(
+        self,
+        name: str,
+        limit: int = 10,
+    ) -> pl.DataFrame:
+        """
+        Case-insensitive substring search against OSM named junctions/roundabouts.
+        Returns an empty DataFrame if the OSM parquet was not loaded.
+        Column schema is compatible with score_candidate() and try_level2().
+        """
+        if self._osm_junctions is None:
+            return pl.DataFrame()
+
+        name_upper = name.upper()
+        results = (
+            self._osm_junctions
+            .filter(
+                pl.col("NAME1_UPPER").str.contains(name_upper, literal=True)
+                | pl.col("NAME2_UPPER").str.contains(name_upper, literal=True)
+            )
+            .sort("TYPE_WEIGHT", descending=True)
+            .head(limit)
+        )
+        # Ensure columns expected by score_candidate are present (as nulls if absent)
+        for col, dtype in [
+            ("COUNTY_UNITARY",   pl.Utf8),
+            ("DISTRICT_BOROUGH", pl.Utf8),
+            ("POPULATED_PLACE",  pl.Utf8),
+        ]:
+            if col not in results.columns:
+                results = results.with_columns(pl.lit(None).cast(dtype).alias(col))
+        return results
 
     def bng_to_wgs84(self, easting: float, northing: float) -> tuple[float, float]:
         """
