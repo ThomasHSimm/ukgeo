@@ -1,5 +1,6 @@
 # ukgeo
 
+[![PyPI](https://img.shields.io/pypi/v/ukgeo)](https://pypi.org/project/ukgeo/)
 [![Kaggle Dataset](https://img.shields.io/badge/Kaggle-ukgeo--combined--dataset-20BEFF?logo=kaggle)](https://www.kaggle.com/datasets/thomassimm/ukgeo-combined-dataset)
 [![License: MIT](https://img.shields.io/badge/Code-MIT-yellow)](#licence)
 [![Data: ODbL](https://img.shields.io/badge/Data-ODbL-brightgreen)](https://opendatacommons.org/licenses/odbl/)

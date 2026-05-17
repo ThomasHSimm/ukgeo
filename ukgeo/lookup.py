@@ -52,19 +52,25 @@ _KEEP_COLS = [
 
 def _data_dir_candidates() -> list[Path]:
     return [
-        Path(__file__).parent / "data",         # bundled in package
         Path(__file__).parent.parent / "data",  # repo root (dev)
         Path.cwd() / "data",                    # cwd (CLI)
+        Path(__file__).parent / "data",         # bundled aliases in package
     ]
 
 
 def _find_data_dir() -> Path:
     """
     Find the data directory in order of preference:
-    1. Alongside the installed package (for pip install)
-    2. Repo root data/ (for development)
-    3. Current working directory data/ (for CLI usage)
+    1. Repo root / installed data directory with parquet files
+    2. Current working directory data/ with parquet files
+    3. Bundled package data/ with aliases only
+
+    Directories containing parquet files are preferred over package data that
+    only contains bundled aliases.
     """
+    for path in _data_dir_candidates():
+        if path.exists() and any(path.glob("*.parquet")):
+            return path
     for path in _data_dir_candidates():
         if path.exists():
             return path

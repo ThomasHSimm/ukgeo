@@ -1,9 +1,9 @@
 """
 Build the combined ukgeo Kaggle dataset.
 
-Combines OS Open Names, OS Open Roads junctions, OSM named junctions, and
-OSM B-road segments into a single unified parquet file, and writes the
-associated Kaggle metadata files.
+Combines OS Open Names, OS Open Roads junctions, OSM named junctions,
+OSM B-road segments, and curated infrastructure aliases into a single
+unified parquet file, and writes the associated Kaggle metadata files.
 
 Usage:
     python scripts/build_kaggle_dataset.py
@@ -14,12 +14,15 @@ Outputs:
     data/kaggle/README.md             — dataset documentation
 """
 
+import argparse
 import json
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
 
 import polars as pl
+from pyproj import Transformer
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -36,6 +39,7 @@ OS_NAMES_PATH    = DATA_DIR / "os_open_names.parquet"
 OS_ROADS_PATH    = DATA_DIR / "os_open_roads_junctions.parquet"
 OSM_PATH         = DATA_DIR / "osm_named_junctions.parquet"
 OSM_ROADS_PATH   = DATA_DIR / "osm_roads.parquet"
+ALIASES_PATH     = DATA_DIR / "infrastructure_aliases.csv"
 
 # Unified schema column order
 COLUMNS = [
@@ -144,7 +148,11 @@ def load_osm_junctions(built_at: str) -> pl.DataFrame:
         pl.lit(None).cast(pl.Float64).alias("MBR_YMIN"),
         pl.lit(None).cast(pl.Float64).alias("MBR_XMAX"),
         pl.lit(None).cast(pl.Float64).alias("MBR_YMAX"),
-        pl.col("OSM_ID").cast(pl.Int64) if "OSM_ID" in df.columns else pl.lit(None).cast(pl.Int64).alias("OSM_ID"),
+        (
+            pl.col("OSM_ID").cast(pl.Int64)
+            if "OSM_ID" in df.columns
+            else pl.lit(None).cast(pl.Int64).alias("OSM_ID")
+        ),
         pl.lit("osm").cast(pl.Utf8).alias("SOURCE"),
         pl.lit(built_at).cast(pl.Utf8).alias("BUILT_AT"),
     ])
@@ -173,12 +181,76 @@ def load_osm_roads(built_at: str) -> pl.DataFrame:
     return df
 
 
+def load_aliases(built_at: str) -> pl.DataFrame:
+    df = pl.read_csv(ALIASES_PATH, comment_prefix="#")
+    df = df.filter(pl.col("lat").is_not_null() & pl.col("lon").is_not_null())
+
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
+    rows = []
+    for row in df.iter_rows(named=True):
+        lon = float(row["lon"])
+        lat = float(row["lat"])
+        easting, northing = transformer.transform(lon, lat)
+        rows.append({
+            "NAME1": row["name"],
+            "NAME1_UPPER": row["name"].upper(),
+            "NAME2": "",
+            "LOCAL_TYPE": row["category"],
+            "TYPE_WEIGHT": 10,
+            "GEOMETRY_X": easting,
+            "GEOMETRY_Y": northing,
+            "MBR_XMIN": None,
+            "MBR_YMIN": None,
+            "MBR_XMAX": None,
+            "MBR_YMAX": None,
+            "OSM_ID": None,
+            "SOURCE": "alias",
+            "BUILT_AT": built_at,
+        })
+
+    if not rows:
+        return pl.DataFrame(schema={
+            "NAME1": pl.Utf8,
+            "NAME1_UPPER": pl.Utf8,
+            "NAME2": pl.Utf8,
+            "LOCAL_TYPE": pl.Utf8,
+            "TYPE_WEIGHT": pl.Int8,
+            "GEOMETRY_X": pl.Float64,
+            "GEOMETRY_Y": pl.Float64,
+            "MBR_XMIN": pl.Float64,
+            "MBR_YMIN": pl.Float64,
+            "MBR_XMAX": pl.Float64,
+            "MBR_YMAX": pl.Float64,
+            "OSM_ID": pl.Int64,
+            "SOURCE": pl.Utf8,
+            "BUILT_AT": pl.Utf8,
+        })
+
+    return pl.DataFrame(rows).select([
+        pl.col("NAME1").cast(pl.Utf8),
+        pl.col("NAME1_UPPER").cast(pl.Utf8),
+        pl.col("NAME2").cast(pl.Utf8),
+        pl.col("LOCAL_TYPE").cast(pl.Utf8),
+        pl.col("TYPE_WEIGHT").cast(pl.Int8),
+        pl.col("GEOMETRY_X").cast(pl.Float64),
+        pl.col("GEOMETRY_Y").cast(pl.Float64),
+        pl.col("MBR_XMIN").cast(pl.Float64),
+        pl.col("MBR_YMIN").cast(pl.Float64),
+        pl.col("MBR_XMAX").cast(pl.Float64),
+        pl.col("MBR_YMAX").cast(pl.Float64),
+        pl.col("OSM_ID").cast(pl.Int64),
+        pl.col("SOURCE").cast(pl.Utf8),
+        pl.col("BUILT_AT").cast(pl.Utf8),
+    ])
+
+
 # ---------------------------------------------------------------------------
 # Part 1: Combined parquet
 # ---------------------------------------------------------------------------
 
 def build_combined() -> pl.DataFrame:
-    missing = [p for p in (OS_NAMES_PATH, OS_ROADS_PATH, OSM_PATH, OSM_ROADS_PATH) if not p.exists()]
+    required_paths = (OS_NAMES_PATH, OS_ROADS_PATH, OSM_PATH, OSM_ROADS_PATH, ALIASES_PATH)
+    missing = [p for p in required_paths if not p.exists()]
     if missing:
         for p in missing:
             print(f"ERROR: Missing required parquet: {p}", file=sys.stderr)
@@ -187,7 +259,8 @@ def build_combined() -> pl.DataFrame:
             "  python scripts/download_os_open_names.py\n"
             "  python scripts/download_os_open_roads.py\n"
             "  python scripts/download_osm_named_junctions.py\n"
-            "  python scripts/download_osm_roads.py",
+            "  python scripts/download_osm_roads.py\n"
+            "  python scripts/build_infrastructure_aliases.py",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -211,10 +284,25 @@ def build_combined() -> pl.DataFrame:
     osm_roads_df = load_osm_roads(built_at)
     print(f"{len(osm_roads_df):,} rows")
 
-    df = pl.concat([os_names_df, os_roads_df, osm_df, osm_roads_df], rechunk=True)
+    print("  Loading infrastructure aliases ...", end=" ", flush=True)
+    aliases_df = load_aliases(built_at)
+    print(f"{len(aliases_df):,} rows")
+
+    df = pl.concat(
+        [os_names_df, os_roads_df, osm_df, osm_roads_df, aliases_df],
+        rechunk=True,
+    )
     df = df.select(COLUMNS)
 
-    return df, len(os_names_df), len(os_roads_df), len(osm_df), len(osm_roads_df)
+    return (
+        df,
+        len(os_names_df),
+        len(os_roads_df),
+        len(osm_df),
+        len(osm_roads_df),
+        len(aliases_df),
+        built_at,
+    )
 
 
 def print_summary(
@@ -223,6 +311,7 @@ def print_summary(
     n_roads: int,
     n_osm: int,
     n_osm_roads: int,
+    n_aliases: int,
     out_path: Path,
 ) -> None:
     size_mb = out_path.stat().st_size / 1e6 if out_path.exists() else 0.0
@@ -236,6 +325,7 @@ def print_summary(
     print(f"  OS Open Roads:    {n_roads:>11,}")
     print(f"  OSM junctions:    {n_osm:>11,}")
     print(f"  OSM road segs:    {n_osm_roads:>11,}")
+    print(f"  Aliases:          {n_aliases:>11,}")
     print()
     print("LOCAL_TYPE breakdown:")
     counts = (
@@ -256,31 +346,18 @@ def print_summary(
 # ---------------------------------------------------------------------------
 
 METADATA = {
-    "title": "ukgeo — UK Geocoding Reference Data",
-    "id": "thomashsimm/ukgeo-data",
+    "title": "ukgeo UK Geocoding Reference Data",
+    "id": "thomassimm/ukgeo-combined-dataset",
     "licenses": [{"name": "ODbL-1.0"}],
     "keywords": [
         "geocoding",
-        "united kingdom",
-        "road safety",
+        "united-kingdom",
+        "road-safety",
         "openstreetmap",
-        "ordnance survey",
+        "ordnance-survey",
         "geospatial",
-        "STATS19",
-        "road network",
+        "transportation",
         "python",
-    ],
-    "collaborators": [],
-    "data": [
-        {
-            "description": (
-                "Combined UK geocoding reference parquet built from OS Open Names, "
-                "OS Open Roads, and OpenStreetMap. For use with the ukgeo Python geocoder."
-            ),
-            "name": "ukgeo_data.parquet",
-            "totalBytes": 0,
-            "columns": [],
-        }
     ],
 }
 
@@ -300,6 +377,7 @@ A single parquet file (`ukgeo_data.parquet`) combining:
 | OS Open Roads | 669 | Motorway junction point locations (OGL) |
 | OpenStreetMap | ~3,000 | Named interchanges and roundabouts (ODbL) |
 | OpenStreetMap | ~105,000 | B-road way segments (ODbL) |
+| Curated aliases | ~35 | Named infrastructure aliases (mixed source/manual) |
 
 ## Schema
 
@@ -317,7 +395,7 @@ A single parquet file (`ukgeo_data.parquet`) combining:
 | `MBR_XMAX` | float64 | Bounding box max easting (null for point features) |
 | `MBR_YMAX` | float64 | Bounding box max northing (null for point features) |
 | `OSM_ID` | int64 | OpenStreetMap way/node id when available |
-| `SOURCE` | str | `os_open_names`, `os_open_roads`, `osm`, or `osm_roads` |
+| `SOURCE` | str | `os_open_names`, `os_open_roads`, `osm`, `osm_roads`, or `alias` |
 | `BUILT_AT` | str | ISO date this file was built |
 
 ## Coordinate reference system
@@ -366,10 +444,7 @@ result = geo.geocode("M62 Junction 26")
 def write_metadata(out_parquet: Path) -> None:
     KAGGLE_DIR.mkdir(parents=True, exist_ok=True)
 
-    meta = METADATA.copy()
-    meta["data"][0]["totalBytes"] = out_parquet.stat().st_size if out_parquet.exists() else 0
-
-    OUT_METADATA.write_text(json.dumps(meta, indent=2))
+    OUT_METADATA.write_text(json.dumps(METADATA, indent=2))
     print(f"Wrote {OUT_METADATA}")
 
     OUT_README.write_text(README_CONTENT)
@@ -380,20 +455,53 @@ def write_metadata(out_parquet: Path) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload to Kaggle after building (requires kaggle CLI configured)",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     KAGGLE_DIR.mkdir(parents=True, exist_ok=True)
 
-    df, n_names, n_roads, n_osm, n_osm_roads = build_combined()
+    df, n_names, n_roads, n_osm, n_osm_roads, n_aliases, built_at = build_combined()
 
     # Print summary before writing
     # Temporarily write to a buffer to get size, then finalize
     print("\nWriting parquet ...")
     df.write_parquet(OUT_PARQUET, compression="zstd")
 
-    print_summary(df, n_names, n_roads, n_osm, n_osm_roads, OUT_PARQUET)
+    print_summary(df, n_names, n_roads, n_osm, n_osm_roads, n_aliases, OUT_PARQUET)
     print(f"Saved to {OUT_PARQUET}")
 
     write_metadata(OUT_PARQUET)
+
+    if args.upload:
+        print("\nUploading to Kaggle...")
+        kaggle_dir = OUT_PARQUET.parent
+        result = subprocess.run(
+            [
+                "kaggle",
+                "datasets",
+                "version",
+                "-p",
+                str(kaggle_dir),
+                "-m",
+                f"v0.4.0 built {built_at} — aliases included",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        print(result.stdout)
+        if result.returncode != 0:
+            print(f"Upload failed:\n{result.stderr}", file=sys.stderr)
+            sys.exit(1)
+        print("Upload complete.")
 
 
 if __name__ == "__main__":
