@@ -3,9 +3,10 @@ Parquet-backed lookup for OS Open Names data.
 Loaded once per Geocoder instance; designed for bulk querying.
 """
 
-import polars as pl
 from pathlib import Path
 from typing import Optional
+
+import polars as pl
 
 # OS Open Names local types we care about, grouped by priority tier
 PLACE_TYPES = {
@@ -134,7 +135,11 @@ class OSNamesLookup:
         # they retain richer metadata (COUNTY_UNITARY, DISTRICT_BOROUGH,
         # POPULATED_PLACE) that improves scoring.  The combined Kaggle parquet
         # is the fallback for users who have only downloaded ukgeo_data.parquet.
-        if parquet_path == DEFAULT_PARQUET and not DEFAULT_PARQUET.exists() and COMBINED_PARQUET.exists():
+        if (
+            parquet_path == DEFAULT_PARQUET
+            and not DEFAULT_PARQUET.exists()
+            and COMBINED_PARQUET.exists()
+        ):
             self._load_from_combined()
         else:
             self._load_individual(parquet_path)
@@ -434,7 +439,11 @@ def _bng_to_wgs84_fallback(easting: float, northing: float) -> tuple[float, floa
         lat = (northing - n0 - meridional_arc) / (a * f0) + lat
         ma = (1 + n + 5 / 4 * n**2 + 5 / 4 * n**3) * (lat - lat0)
         mb = (3 * n + 3 * n**2 + 21 / 8 * n**3) * math.sin(lat - lat0) * math.cos(lat + lat0)
-        mc = (15 / 8 * n**2 + 15 / 8 * n**3) * math.sin(2 * (lat - lat0)) * math.cos(2 * (lat + lat0))
+        mc = (
+            (15 / 8 * n**2 + 15 / 8 * n**3)
+            * math.sin(2 * (lat - lat0))
+            * math.cos(2 * (lat + lat0))
+        )
         md = 35 / 24 * n**3 * math.sin(3 * (lat - lat0)) * math.cos(3 * (lat + lat0))
         meridional_arc = b * f0 * (ma - mb + mc - md)
 

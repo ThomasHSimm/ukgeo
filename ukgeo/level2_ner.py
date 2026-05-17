@@ -7,10 +7,11 @@ import re
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from typing import Optional
+
 import polars as pl
 
-from .models import GeoResult
 from .lookup import OSNamesLookup
+from .models import GeoResult
 from .uk_admin import ADMIN_BNG_EXTENTS, ALL_ADMIN, resolve_alias
 
 # ---------------------------------------------------------------------------
@@ -126,15 +127,24 @@ class TokenGazetteer:
         Token may be a restored multi-word phrase e.g. 'WEST YORKSHIRE'."""
         t = token.upper()
         matches = []
-        if t in self.counties:             matches.append("county")
-        if t in self.districts:            matches.append("district")
-        if t in self.cities:               matches.append("city")
-        if t in self.towns:                matches.append("town")
-        if t in self.villages:             matches.append("village")
-        if _ROAD_MOTORWAY_RE.match(t):     matches.append("road_motorway")
-        if _ROAD_A_RE.match(t):            matches.append("road_a")
-        if _ROAD_B_RE.match(t):            matches.append("road_b")
-        if _JUNCTION_RE.match(t):          matches.append("junction")
+        if t in self.counties:
+            matches.append("county")
+        if t in self.districts:
+            matches.append("district")
+        if t in self.cities:
+            matches.append("city")
+        if t in self.towns:
+            matches.append("town")
+        if t in self.villages:
+            matches.append("village")
+        if _ROAD_MOTORWAY_RE.match(t):
+            matches.append("road_motorway")
+        if _ROAD_A_RE.match(t):
+            matches.append("road_a")
+        if _ROAD_B_RE.match(t):
+            matches.append("road_b")
+        if _JUNCTION_RE.match(t):
+            matches.append("junction")
         return matches or ["unknown"]
 
     def fuzzy_tag(self, token: str, cutoff: float = 0.65) -> Optional[str]:
@@ -464,8 +474,14 @@ def try_level2(
     tagged = tag_tokens(tokens, gazetteer, weights)
 
     # Derive county context before pass 2 so fuzzy can be county-scoped
-    county_tokens_pre = [tk for tk in tagged if tk.entity_type == "county" and not tk.is_qualifier]
-    county_names = _county_name_set(lookup, county_tokens_pre[0].normalised) if county_tokens_pre else None
+    county_tokens_pre = [
+        tk for tk in tagged if tk.entity_type == "county" and not tk.is_qualifier
+    ]
+    county_names = (
+        _county_name_set(lookup, county_tokens_pre[0].normalised)
+        if county_tokens_pre
+        else None
+    )
 
     # Pass 2: county-aware fuzzy for sole unknown place tokens
     _apply_fuzzy_tokens(tagged, gazetteer, weights, county_names)
@@ -483,8 +499,14 @@ def try_level2(
 
     # Collect context tokens by type (after fuzzy resolution)
     county_tokens = [tk for tk in tagged if tk.entity_type == "county" and not tk.is_qualifier]
-    place_tokens  = [tk for tk in tagged if tk.entity_type in ("city", "town", "village") and not tk.is_qualifier]
-    all_non_qual  = [tk for tk in tagged if not tk.is_qualifier and tk.entity_type not in ("unknown",)]
+    place_tokens = [
+        tk
+        for tk in tagged
+        if tk.entity_type in ("city", "town", "village") and not tk.is_qualifier
+    ]
+    all_non_qual = [
+        tk for tk in tagged if not tk.is_qualifier and tk.entity_type not in ("unknown",)
+    ]
 
     road_unanchored = False
     b_road_osm_used = False

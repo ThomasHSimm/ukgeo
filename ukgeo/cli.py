@@ -108,7 +108,8 @@ def cmd_geocode(args) -> int:
 
     resolved = results_df["lat"].drop_nulls().len()
     print(f"\nDone in {elapsed:.1f}s", file=sys.stderr)
-    print(f"Resolved:   {resolved}/{len(inputs)} ({100*resolved/max(len(inputs),1):.1f}%)", file=sys.stderr)
+    resolved_pct = 100 * resolved / max(len(inputs), 1)
+    print(f"Resolved:   {resolved}/{len(inputs)} ({resolved_pct:.1f}%)", file=sys.stderr)
     print(f"Output:     {output_path}", file=sys.stderr)
 
     return 0
@@ -117,8 +118,8 @@ def cmd_geocode(args) -> int:
 def cmd_info(args) -> int:
     """Print info about the current ukgeo installation and data."""
     from ukgeo import __version__
-    from ukgeo.lookup import ALIASES_CSV, DEFAULT_PARQUET, JUNCTIONS_PARQUET, OSM_ROADS_PARQUET
     from ukgeo.level3_os_names import _get_api_key
+    from ukgeo.lookup import ALIASES_CSV, DEFAULT_PARQUET, JUNCTIONS_PARQUET, OSM_ROADS_PARQUET
 
     print(f"ukgeo {__version__}")
     print()
@@ -133,7 +134,11 @@ def cmd_info(args) -> int:
     for label, path in files:
         if path.exists():
             size_mb = path.stat().st_size / (1 << 20)
-            size_str = f"{size_mb:.1f} MB" if size_mb >= 1 else f"{path.stat().st_size / 1024:.0f} KB"
+            size_str = (
+                f"{size_mb:.1f} MB"
+                if size_mb >= 1
+                else f"{path.stat().st_size / 1024:.0f} KB"
+            )
             print(f"  ✓ {label:<30} {path.name} ({size_str})")
         else:
             print(f"  ✗ {label:<30} not found — run download script")
@@ -159,8 +164,10 @@ def cmd_info(args) -> int:
     print()
     print("Pipeline levels available:")
     print("  Level 1 — regex + postcodes.io     always")
-    print(f"  Level 2 — OS Names parquet         {'yes' if DEFAULT_PARQUET.exists() else 'no — download OS Open Names'}")
-    print(f"  Level 3 — OS Names API             {'yes' if api_key else 'no — set OS_API_KEY in .env'}")
+    level2_status = "yes" if DEFAULT_PARQUET.exists() else "no — download OS Open Names"
+    level3_status = "yes" if api_key else "no — set OS_API_KEY in .env"
+    print(f"  Level 2 — OS Names parquet         {level2_status}")
+    print(f"  Level 3 — OS Names API             {level3_status}")
     print("  Level 4 — Ollama LLM               not implemented")
 
     return 0
@@ -275,6 +282,7 @@ def cmd_plot(args) -> int:
         return 1
 
     import polars as pl
+
     from ukgeo.maps import plot_results
 
     input_path = Path(args.input)
@@ -318,7 +326,10 @@ def main() -> int:
     )
     geo_p.add_argument(
         "--column", "-c",
-        help="Column name in CSV containing location strings (default: auto-detect first string column)",
+        help=(
+            "Column name in CSV containing location strings "
+            "(default: auto-detect first string column)"
+        ),
     )
     geo_p.add_argument(
         "--domain", "-d",
