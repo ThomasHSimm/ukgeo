@@ -13,7 +13,16 @@ Usage examples:
 import argparse
 import sys
 import time
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore", category=UserWarning, module="requests")
+warnings.filterwarnings(
+    "ignore",
+    message="Unable to find acceptable character detection dependency.*",
+    category=Warning,
+    module="requests",
+)
 
 
 def cmd_geocode(args) -> int:
@@ -86,7 +95,12 @@ def cmd_geocode(args) -> int:
     elapsed = time.time() - t0
 
     # Join results back to original df
-    output_df = pl.concat([df, results_df.drop("input")], how="horizontal")
+    # Drop any geocoder output columns already present in the source CSV
+    # (e.g. if the CSV was previously geocoded or has lat/lon columns)
+    GEOCODER_COLS = ["lat", "lon", "confidence", "level_resolved",
+                     "interpreted_as", "match_type", "candidates_considered", "notes"]
+    df_clean = df.drop([c for c in GEOCODER_COLS if c in df.columns])
+    output_df = pl.concat([df_clean, results_df.drop("input")], how="horizontal")
 
     # Output
     output_path = Path(args.output) if args.output else input_path.with_suffix(".geocoded.csv")
@@ -141,7 +155,7 @@ def main() -> int:
         prog="ukgeo",
         description="UK location free-text geocoder",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.3")
+    parser.add_argument("--version", action="version", version="%(prog)s 0.3.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- geocode subcommand ---
