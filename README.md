@@ -1,9 +1,31 @@
 # ukgeo
 
 [![PyPI](https://img.shields.io/pypi/v/ukgeo)](https://pypi.org/project/ukgeo/)
+[![Open Road Risk](https://img.shields.io/badge/Open%20Road%20Risk-ukgeo-2E7D32)](https://openroadrisk.org/tools/ukgeo.html)
 [![Kaggle Dataset](https://img.shields.io/badge/Kaggle-ukgeo--combined--dataset-20BEFF?logo=kaggle)](https://www.kaggle.com/datasets/thomassimm/ukgeo-combined-dataset)
 [![License: MIT](https://img.shields.io/badge/Code-MIT-yellow)](#licence)
 [![Data: ODbL](https://img.shields.io/badge/Data-ODbL-brightgreen)](https://opendatacommons.org/licenses/odbl/)
+
+`ukgeo` is a UK-focused free-text geocoder for turning messy location strings into latitude/longitude coordinates. It is designed for strings like road references, postcodes, place names, motorway junctions, named junctions, and colloquial infrastructure names, especially when processing CSVs or other bulk datasets.
+
+It uses a tiered pipeline: fast postcode and road-reference handling first, then OS/OpenStreetMap token scoring, with optional OS Names API fallback. Reference data is loaded locally from parquet files, so repeated batch geocoding can run in-process after setup.
+
+Project page with examples and fuller context: [openroadrisk.org/tools/ukgeo.html](https://openroadrisk.org/tools/ukgeo.html)
+
+## What it is
+
+- A Python package and CLI for UK location text geocoding
+- A batch-friendly tool for datasets with noisy, partial, or non-address location descriptions
+- A road-aware matcher for M/A/B roads, motorway junctions, named roundabouts, bridges, tunnels, stations, and places
+- A transparent geocoder that returns confidence, match type, pipeline level, candidates considered, and notes
+
+## What it is not
+
+- A global geocoder
+- A routing engine, distance matrix, or travel-time API
+- A rooftop-accurate address geocoder
+- A substitute for authoritative emergency-service, legal, cadastral, or safety-critical location systems
+- A magic fixer for every vague location string; ambiguous inputs still need review
 
 ## Quick start
 
@@ -66,10 +88,6 @@ ukgeo info
 
 Output columns added to CSV: `lat`, `lon`, `confidence`, `level_resolved`,
 `interpreted_as`, `match_type`, `candidates_considered`, `notes`.
-
-A tiered UK location free-text geocoder. Converts messy location strings — addresses, road references, place names, colloquial names — to latitude/longitude coordinates using a pipeline that escalates from fast regex matching to OS Open Names lookup, with optional API and local LLM fallbacks.
-
-Designed for bulk processing with a parquet-backed setup step: load reference data once, then geocode hundreds, thousands, or millions of UK location strings in-process.
 
 ## Features
 
