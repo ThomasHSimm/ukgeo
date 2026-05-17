@@ -166,6 +166,106 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_setup(args) -> int:
+    """Download ukgeo data from Kaggle."""
+    print("ukgeo setup — downloading data from Kaggle")
+    print()
+
+    data_dir = Path(__file__).parent.parent / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    out_path = data_dir / "ukgeo_data.parquet"
+
+    if out_path.exists() and not args.force:
+        print(f"✓ Data already present: {out_path}")
+        print("  Use --force to re-download.")
+        return 0
+
+    try:
+        import kaggle
+
+        print("Downloading via Kaggle API...")
+        kaggle.api.authenticate()
+        kaggle.api.dataset_download_files(
+            "thomassimm/ukgeo-combined-dataset",
+            path=str(data_dir),
+            unzip=True,
+            quiet=False,
+        )
+        print(f"✓ Downloaded to {out_path}")
+        return 0
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"Kaggle API failed: {e}")
+
+    print("Downloading via direct URL...")
+    print("(For faster downloads, install the Kaggle CLI: pip install kaggle)")
+    print()
+
+    kaggle_url = (
+        "https://www.kaggle.com/api/v1/datasets/download/"
+        "thomassimm/ukgeo-combined-dataset/ukgeo_data.parquet"
+    )
+
+    try:
+        import base64
+        import json
+
+        import httpx
+
+        kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
+        headers = {}
+        if kaggle_json.exists():
+            creds = json.loads(kaggle_json.read_text())
+            token = base64.b64encode(
+                f"{creds['username']}:{creds['key']}".encode()
+            ).decode()
+            headers["Authorization"] = f"Basic {token}"
+
+        with httpx.stream(
+            "GET",
+            kaggle_url,
+            headers=headers,
+            follow_redirects=True,
+            timeout=300,
+        ) as r:
+            if r.status_code == 401:
+                print("Authentication required. Please either:")
+                print("  1. Install kaggle CLI: pip install kaggle")
+                print("  2. Get API token from https://www.kaggle.com/settings")
+                print("  3. Save to ~/.kaggle/kaggle.json")
+                print()
+                print("Or download manually from:")
+                print("  https://www.kaggle.com/datasets/thomassimm/ukgeo-combined-dataset")
+                print(f"  and place ukgeo_data.parquet in: {data_dir}")
+                return 1
+
+            r.raise_for_status()
+            total = int(r.headers.get("content-length", 0))
+            received = 0
+
+            with open(out_path, "wb") as f:
+                for chunk in r.iter_bytes(chunk_size=1 << 20):
+                    f.write(chunk)
+                    received += len(chunk)
+                    if total:
+                        pct = received / total * 100
+                        mb = received / (1 << 20)
+                        print(f"\r  {pct:.1f}% ({mb:.1f} MB)", end="", flush=True)
+            print()
+
+        print(f"✓ Downloaded to {out_path}")
+        return 0
+
+    except Exception as e:
+        print(f"Download failed: {e}")
+        print()
+        print("Please download manually from:")
+        print("  https://www.kaggle.com/datasets/thomassimm/ukgeo-combined-dataset")
+        print(f"  and place ukgeo_data.parquet in: {data_dir}")
+        return 1
+
+
 def cmd_plot(args) -> int:
     """Generate an HTML map from a geocoded CSV."""
     try:
@@ -203,7 +303,7 @@ def main() -> int:
         prog="ukgeo",
         description="UK location free-text geocoder",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.3.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 0.4.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- geocode subcommand ---
@@ -236,6 +336,15 @@ def main() -> int:
     # --- info subcommand ---
     info_p = sub.add_parser("info", help="Show ukgeo installation status")
     info_p.set_defaults(func=cmd_info)
+
+    # --- setup subcommand ---
+    setup_p = sub.add_parser("setup", help="Download ukgeo data from Kaggle")
+    setup_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download even if data already exists",
+    )
+    setup_p.set_defaults(func=cmd_setup)
 
     # --- plot subcommand ---
     plot_p = sub.add_parser("plot", help="Generate an HTML map from a geocoded CSV")

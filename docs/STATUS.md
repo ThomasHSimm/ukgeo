@@ -2,7 +2,7 @@
 
 ## Test Suite
 
-**40 passed, 6 xfailed** (as of 2026-05-17)
+**47 passed, 6 xfailed** (as of 2026-05-17)
 
 All substantive test cases pass. The 6 `xfail` entries are documented known gaps, not regressions.
 
@@ -40,6 +40,9 @@ All substantive test cases pass. The 6 `xfail` entries are documented known gaps
 | Empty input → Low confidence + unresolved | 1 | ✓ |
 | `match_score` present in notes | 1 | ✓ |
 | B-road resolution (`B6265`, `B6113`, `B1224`) | 2 pass / 1 xfail | ✓ / xfail |
+| CLI commands (`geocode`, `info`, `plot`) | 3 | ✓ All pass |
+| Folium map output | 1 | ✓ |
+| Infrastructure normalisation (`Moto Keele`, bus stations, airports) | 1 | ✓ |
 
 ### xfail cases
 
@@ -67,6 +70,7 @@ is a fallback for users who have downloaded only the release dataset.
 | `os_open_roads_junctions.parquet` | ~3 MB | OS Open Roads (OGL) | `scripts/download_os_open_roads.py` |
 | `osm_named_junctions.parquet` | ~1.3 MB | OpenStreetMap (ODbL) | `scripts/download_osm_named_junctions.py` |
 | `osm_roads.parquet` | ~6 MB | OpenStreetMap (ODbL) | `scripts/download_osm_roads.py` |
+| `infrastructure_aliases.csv` | small curated CSV | OSM / OS Names API / manual curation | `scripts/build_infrastructure_aliases.py` |
 | `kaggle/ukgeo_data.parquet` | release bundle | Combined sources | `scripts/build_kaggle_dataset.py` |
 
 ### Regenerating data
@@ -76,6 +80,7 @@ python scripts/download_os_open_names.py
 python scripts/download_os_open_roads.py
 python scripts/download_osm_named_junctions.py
 python scripts/download_osm_roads.py
+python scripts/build_infrastructure_aliases.py
 python scripts/build_kaggle_dataset.py
 ```
 
@@ -89,6 +94,11 @@ Download scripts prompt before overwriting existing files.
 Input string
     │
     ▼
+Level 0 — Infrastructure aliases (data/infrastructure_aliases.csv)
+    │  Handles: exact named infrastructure aliases for bridges, tunnels,
+    │           services, viaducts, interchanges and other known gaps
+    │
+    ▼ (if no alias match)
 Level 1 — Regex (level1_regex.py)
     │  Handles: full UK postcodes  →  postcodes.io API  →  lat/lon
     │           road refs (M/A/B roads) + junction numbers (extracted, passed to Level 2)
@@ -118,8 +128,12 @@ Level 2 — OS Names NER + scoring (level2_ner.py)
           Candidate scoring (TYPE_WEIGHT + context match bonuses/penalties)
           Confidence: score/max_possible_score ≥ 0.15 → High, ≥ 0.10 → Medium
     │
+    ▼ (if unresolved or Low confidence, and no handled road-junction pattern)
+Level 3 — OS Names API fallback (level3_os_names.py)
+    │  Handles: selected unresolved infrastructure/place queries via OS Data Hub
+    │           with service-operator normalisation and LOCAL_TYPE fq filtering
+    │
     ▼ (stub — not implemented)
-Level 3 — External API fallback
 Level 4 — Local Ollama LLM fallback
 ```
 
@@ -154,4 +168,5 @@ Weights can be overridden at `Geocoder()` init or calibrated with `scripts/calib
 - **Spatial contradiction for short city names** — `Bradford Cornwall` still resolves to Bradford rather than being suppressed, because "Bradford" is an unambiguous high-weight match. Requires a harder admin-context veto, not yet implemented.
 - **OS Names URI fields** — `COUNTY_UNITARY` and `POPULATED_PLACE` are stored as linked-data URIs in the CSV export; context scoring falls back to BNG spatial extents rather than string matching.
 - **Colloquial junction names without alt_name in OSM** — if an interchange has no `alt_name` tag in OpenStreetMap (e.g. a newly named roundabout), it will not be found via the OSM augmentation path.
-- **Level 3 / Level 4 not implemented** — API and LLM fallback stubs exist in `pipeline.py` but are not wired up.
+- **Infrastructure alias coverage is intentionally curated** — the current CSV has 35 coordinate-backed named infrastructure aliases.
+- **Level 4 not implemented** — local LLM fallback remains a stub.

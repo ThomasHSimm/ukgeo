@@ -49,12 +49,50 @@ _KEEP_COLS = [
 ]
 
 
-JUNCTIONS_PARQUET     = Path(__file__).parent.parent / "data" / "os_open_roads_junctions.parquet"
-OSM_JUNCTIONS_PARQUET = Path(__file__).parent.parent / "data" / "osm_named_junctions.parquet"
-OSM_ROADS_PARQUET     = Path(__file__).parent.parent / "data" / "osm_roads.parquet"
-COMBINED_PARQUET      = Path(__file__).parent.parent / "data" / "kaggle" / "ukgeo_data.parquet"
-DEFAULT_PARQUET       = Path(__file__).parent.parent / "data" / "os_open_names.parquet"
-ALIASES_CSV           = Path(__file__).parent.parent / "data" / "infrastructure_aliases.csv"
+def _data_dir_candidates() -> list[Path]:
+    return [
+        Path(__file__).parent / "data",         # bundled in package
+        Path(__file__).parent.parent / "data",  # repo root (dev)
+        Path.cwd() / "data",                    # cwd (CLI)
+    ]
+
+
+def _find_data_dir() -> Path:
+    """
+    Find the data directory in order of preference:
+    1. Alongside the installed package (for pip install)
+    2. Repo root data/ (for development)
+    3. Current working directory data/ (for CLI usage)
+    """
+    for path in _data_dir_candidates():
+        if path.exists():
+            return path
+    return Path(__file__).parent.parent / "data"
+
+
+def _find_data_file(filename: str, *fallbacks: Path) -> Path:
+    """Find a data file across package, repo, and current working directories."""
+    for data_dir in _data_dir_candidates():
+        candidate = data_dir / filename
+        if candidate.exists():
+            return candidate
+    for candidate in fallbacks:
+        if candidate.exists():
+            return candidate
+    return _find_data_dir() / filename
+
+
+DATA_DIR = _find_data_dir()
+DEFAULT_PARQUET       = _find_data_file("os_open_names.parquet")
+COMBINED_PARQUET      = _find_data_file(
+    "ukgeo_data.parquet",
+    Path(__file__).parent.parent / "data" / "kaggle" / "ukgeo_data.parquet",
+    Path.cwd() / "data" / "kaggle" / "ukgeo_data.parquet",
+)
+JUNCTIONS_PARQUET     = _find_data_file("os_open_roads_junctions.parquet")
+OSM_JUNCTIONS_PARQUET = _find_data_file("osm_named_junctions.parquet")
+OSM_ROADS_PARQUET     = _find_data_file("osm_roads.parquet")
+ALIASES_CSV           = _find_data_file("infrastructure_aliases.csv")
 
 _NULL_CONTEXT_COLS = [
     pl.lit(None).cast(pl.Utf8).alias("COUNTY_UNITARY"),
@@ -156,9 +194,10 @@ class OSNamesLookup:
         """Load data from the original individual parquet files."""
         if not parquet_path.exists():
             raise FileNotFoundError(
-                f"OS Open Names parquet not found at {parquet_path}. "
-                "Run scripts/download_os_open_names.py first, or place "
-                "data/kaggle/ukgeo_data.parquet for auto-detection."
+                f"ukgeo data not found at {parquet_path}.\n"
+                "Run 'ukgeo setup' to download data automatically, or visit:\n"
+                "https://www.kaggle.com/datasets/thomassimm/ukgeo-combined-dataset\n"
+                f"Download ukgeo_data.parquet and place it in: {parquet_path.parent}"
             )
         self._df = pl.read_parquet(parquet_path)
 

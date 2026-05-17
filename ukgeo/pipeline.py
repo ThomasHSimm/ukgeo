@@ -4,16 +4,13 @@ Designed for single calls and bulk batch processing.
 """
 
 import os
-from pathlib import Path
 from typing import Optional, Union
 import polars as pl
 
 from .models import GeoResult
-from .lookup import OSNamesLookup
+from .lookup import DEFAULT_PARQUET, OSNamesLookup
 from .level1_regex import try_level1
 from .level2_ner import ScoringWeights, TokenGazetteer, try_level2
-
-DEFAULT_PARQUET = Path(__file__).parent.parent / "data" / "os_open_names.parquet"
 
 
 class Geocoder:

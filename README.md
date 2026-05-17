@@ -6,30 +6,35 @@
 
 ## Quick start
 
-**Option A — Pre-built data (fastest):**
-Download `ukgeo_data.parquet` from [Kaggle](https://www.kaggle.com/datasets/thomassimm/ukgeo-combined-dataset), place it at `data/kaggle/ukgeo_data.parquet`, then:
+### Option A — pip install (recommended)
 
 ```bash
-pip install -e .
+pip install ukgeo
+ukgeo setup        # downloads ~41MB data file from Kaggle
+ukgeo geocode "M62 Junction 26"
 ```
+
+### Option B — from source
+
+```bash
+git clone https://github.com/ThomasHSimm/ukgeo.git
+cd ukgeo
+pip install -e ".[dev]"
+python scripts/download_os_open_names.py   # ~5 min, builds local parquets
+python scripts/download_os_open_roads.py
+python scripts/download_osm_named_junctions.py
+python scripts/download_osm_roads.py
+```
+
+### Python API
 
 ```python
 from ukgeo import Geocoder
 
 geo = Geocoder()
 print(geo.geocode("M62 Junction 26"))
+print(geo.geocode("Spaghetti Junction Birmingham"))
 print(geo.geocode("Skipton, North Yorkshire"))
-print(geo.geocode("LS1 1BA"))
-```
-
-**Option B — Build data locally (latest source data):**
-
-```bash
-pip install -e ".[dev]"
-python scripts/download_os_open_names.py
-python scripts/download_os_open_roads.py
-python scripts/download_osm_named_junctions.py
-python scripts/download_osm_roads.py
 ```
 
 ## CLI usage

@@ -1,0 +1,42 @@
+# ukgeo infrastructure aliases
+# Sources: OpenStreetMap (ODbL) © OpenStreetMap contributors
+#          OS Names API — Contains OS data © Crown Copyright 2024
+#          manual — verified coordinates from public sources
+# Manually verified and maintained. Add new rows as gaps are found.
+# Columns: name (input text), category, lat, lon, source, verified_name, notes
+name,category,lat,lon,source,verified_name,notes
+Dartford Crossing,bridge,51.4454,0.2744,manual,Stone Crossing,A282 Thames crossing
+QE2 Bridge,bridge,51.464681,0.258788,os_names_api,Queen Elizabeth II Bridge,Named Road
+Severn Bridge,bridge,51.6082,-2.6366,manual,,M48 first Severn crossing
+Second Severn Crossing,bridge,51.5765,-2.7215,manual,Princess of Wales Hospital,Prince of Wales Bridge M4
+Humber Bridge,bridge,53.577079,-0.059004,os_names_api,Humber Bridge Road,Named Road
+Forth Road Bridge,bridge,56.0001,-3.4014,manual,,A90 Firth of Forth
+Forth Bridge,bridge,56.0,-3.3863,manual,Forth Park,rail bridge Firth of Forth
+Tay Road Bridge,bridge,56.4535,-2.9916,manual,,A92 Firth of Tay
+Tyne Tunnel,tunnel,54.9895,-1.4627,manual,,A19 under River Tyne
+Mersey Gateway,bridge,53.3385,-2.722,manual,Rotherham Gateway,A533 River Mersey
+Runcorn Bridge,bridge,53.3365,-2.7294,manual,Silver Jubilee Close,Silver Jubilee Bridge A533
+Tinsley Viaduct,viaduct,53.3977,-1.3922,manual,Tinsley,M1 viaduct Sheffield
+Thelwall Viaduct,viaduct,53.3895,-2.4285,manual,Thelwall,M6 viaduct Warrington
+Almondsbury Interchange,junction,51.5588,-2.5614,manual,Almondsbury,M4/M5 junction
+Lofthouse Interchange,junction,53.732,-1.521,manual,Lofthouse,M62/M1 junction
+Gravelly Hill Interchange,junction,52.513521,-1.848737,os_names_api,Gravelly Hill,Suburban Area
+Spaghetti Junction,junction,52.5137,-1.8346,manual,Gravelly Hill,Gravelly Hill M6 Birmingham
+Magic Roundabout Swindon,roundabout,51.5585,-1.7837,manual,,Swindon town centre
+Chiswick Flyover,junction,51.490505,-0.251382,os_names_api,Chiswick Lane,Named Road
+Harrogate Bus Station,bus_station,53.9924,-1.5418,manual,,Station Parade Harrogate
+Cobham Services,services,51.3301,-0.4437,manual,,M25 J9/10 Surrey
+Clacket Lane Services,services,51.273185,0.038465,os_names_api,Clacket Lane Services Eastbound,Road User Services
+Heston Services,services,51.488196,-0.396259,os_names_api,Heston Services,Road User Services
+Mersey Tunnel,tunnel,53.400964,-3.003149,os_names_api,Queensway (Mersey Tunnel),Named Road
+Kingsway Tunnel,tunnel,51.515308,-0.118986,os_names_api,Kingsway Tunnel,Section Of Named Road
+Blackwall Tunnel,tunnel,51.497968,0.001712,os_names_api,Blackwall Tunnel Approach,Named Road
+Rotherhithe Tunnel,tunnel,51.500597,-0.051844,os_names_api,Rotherhithe Tunnel,Named Road
+Dartford Tunnel,tunnel,51.4454,0.2744,manual,Stone Crossing,A282 Thames crossing
+Brynglas Tunnels,tunnel,51.5976,-3.0281,manual,Brynglas,M4 Newport Wales
+Queensway Tunnel Birmingham,tunnel,52.483272,-1.902191,os_names_api,Queensway,Named Road
+Tinsley Viaduct Sheffield,viaduct,53.3977,-1.3922,manual,Tinsley Viaduct Sheffield,M1 viaduct Sheffield
+Dartford Bridge,bridge,51.4454,0.2744,manual,Dartford Bridge,alt name QE2 Bridge
+Liverpool Bus Station,bus_station,53.4082,-2.9916,manual,Liverpool Bus Station,Queen Square Bus Station — Liverpool city centre
+Queen Square Bus Station,bus_station,53.4082,-2.9916,os_names_api,Queen Square Bus Station,Queen Square Bus Station
+Chorlton Street Coach Station,bus_station,53.4772,-2.2354,os_names_api,Chorlton Street Coach Station,Chorlton Bus Station

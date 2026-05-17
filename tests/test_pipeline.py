@@ -434,3 +434,15 @@ def test_infrastructure_normalisation():
     text, fq = normalise_infrastructure("Skipton")
     assert text == "Skipton"
     assert fq is None
+
+
+def test_cli_setup_help():
+    """Verify setup command is registered and shows help."""
+    import subprocess
+
+    result = subprocess.run(
+        ["ukgeo", "setup", "--help"],
+        capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert "Kaggle" in result.stdout or "download" in result.stdout.lower()
