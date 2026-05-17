@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run data-free tests
+        run: |
+          pytest -v --cache-clear \
+            tests/test_pipeline.py::test_empty_input \
+            tests/test_pipeline.py::test_cli_single_query \
+            tests/test_pipeline.py::test_cli_info \
+            tests/test_pipeline.py::test_cli_setup_help \
+            tests/test_pipeline.py::test_infrastructure_normalisation \
+            tests/test_pipeline.py::test_plot_results_returns_map \
+            --tb=short
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check ukgeo/
