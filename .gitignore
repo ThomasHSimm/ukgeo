@@ -5,8 +5,9 @@ data/*.csv
 data/os_names_api_comparison.csv
 !ukgeo/data/infrastructure_aliases.csv
 
-# Kaggle release files (large parquet + metadata)
-data/kaggle/
+# Kaggle release files (large parquet is ignored; metadata is tracked)
+data/kaggle/*
+!data/kaggle/dataset-metadata.json
 
 # Calibrated weights are user-specific, not committed by default
 # Remove this line if you want to share weights in the repo

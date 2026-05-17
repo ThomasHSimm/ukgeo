@@ -1,0 +1,19 @@
+{
+  "title": "ukgeo UK Geocoding Reference Data",
+  "id": "thomassimm/ukgeo-combined-dataset",
+  "licenses": [
+    {
+      "name": "ODbL-1.0"
+    }
+  ],
+  "keywords": [
+    "geocoding",
+    "united-kingdom",
+    "road-safety",
+    "openstreetmap",
+    "ordnance-survey",
+    "geospatial",
+    "transportation",
+    "python"
+  ]
+}
