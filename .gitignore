@@ -46,3 +46,6 @@ env/
 notebooks/data/
 notebooks/.~lock.*
 *.swp
+
+
+docs/nogit/
