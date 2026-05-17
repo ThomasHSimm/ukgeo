@@ -301,3 +301,52 @@ def test_empty_input(geo):
 def test_match_score_present(geo):
     r = geo.geocode("Skipton, North Yorkshire")
     assert r.notes and "match_score=" in r.notes
+
+
+def test_cli_single_query():
+    import subprocess
+
+    result = subprocess.run(
+        ["ukgeo", "geocode", "Skipton, North Yorkshire"],
+        capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert "lat:" in result.stdout
+    assert "53." in result.stdout
+
+
+def test_cli_info():
+    import subprocess
+
+    result = subprocess.run(
+        ["ukgeo", "info"],
+        capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert "OS Open Names" in result.stdout
+    assert "Level 1" in result.stdout
+
+
+def test_cli_csv(tmp_path):
+    import subprocess
+    import polars as pl
+
+    csv_path = tmp_path / "test_locations.csv"
+    pl.DataFrame({"location": [
+        "Skipton, North Yorkshire",
+        "M62 Junction 26",
+        "LS1 1BA",
+    ]}).write_csv(csv_path)
+
+    out_path = tmp_path / "out.csv"
+    result = subprocess.run(
+        ["ukgeo", "geocode", str(csv_path),
+         "--column", "location",
+         "--output", str(out_path)],
+        capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert out_path.exists()
+    df = pl.read_csv(out_path)
+    assert "lat" in df.columns
+    assert len(df) == 3

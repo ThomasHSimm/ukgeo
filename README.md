@@ -32,6 +32,31 @@ python scripts/download_osm_named_junctions.py
 python scripts/download_osm_roads.py
 ```
 
+## CLI usage
+
+After installation, `ukgeo` is available as a command:
+
+```bash
+# Single query
+ukgeo geocode "M62 Junction 26"
+ukgeo geocode "Skipton, North Yorkshire"
+
+# Geocode a CSV file (auto-detects first string column)
+ukgeo geocode locations.csv --output results.csv
+
+# Specify column and domain
+ukgeo geocode crashes.csv --column road_reference --domain road_safety
+
+# Enable Level 3 OS Names API fallback (requires OS_API_KEY in .env)
+ukgeo geocode locations.csv --max-level 3
+
+# Check installation status
+ukgeo info
+```
+
+Output columns added to CSV: `lat`, `lon`, `confidence`, `level_resolved`,
+`interpreted_as`, `match_type`, `candidates_considered`, `notes`.
+
 A tiered UK location free-text geocoder. Converts messy location strings — addresses, road references, place names, colloquial names — to latitude/longitude coordinates using a pipeline that escalates from fast regex matching to OS Open Names lookup, with optional API and local LLM fallbacks.
 
 Designed for bulk processing with a parquet-backed setup step: load reference data once, then geocode hundreds, thousands, or millions of UK location strings in-process.
