@@ -54,6 +54,7 @@ OSM_JUNCTIONS_PARQUET = Path(__file__).parent.parent / "data" / "osm_named_junct
 OSM_ROADS_PARQUET     = Path(__file__).parent.parent / "data" / "osm_roads.parquet"
 COMBINED_PARQUET      = Path(__file__).parent.parent / "data" / "kaggle" / "ukgeo_data.parquet"
 DEFAULT_PARQUET       = Path(__file__).parent.parent / "data" / "os_open_names.parquet"
+ALIASES_CSV           = Path(__file__).parent.parent / "data" / "infrastructure_aliases.csv"
 
 _NULL_CONTEXT_COLS = [
     pl.lit(None).cast(pl.Utf8).alias("COUNTY_UNITARY"),
@@ -106,6 +107,7 @@ class OSNamesLookup:
             self._osm_roads = pl.read_parquet(OSM_ROADS_PARQUET)
         elif not hasattr(self, "_osm_roads"):
             self._osm_roads = None
+        self._aliases = self._load_aliases()
 
     def _load_from_combined(self) -> None:
         """Load all data slices from the combined Kaggle parquet."""
@@ -175,6 +177,38 @@ class OSNamesLookup:
     @property
     def size(self) -> int:
         return len(self._df)
+
+    def _load_aliases(self) -> dict[str, dict]:
+        """Load infrastructure aliases CSV as a dict keyed by uppercased name."""
+        if not ALIASES_CSV.exists():
+            return {}
+
+        try:
+            df = (
+                pl.read_csv(ALIASES_CSV, comment_prefix="#")
+                .with_columns(pl.col("lat").cast(pl.Utf8).alias("lat_text"))
+                .filter(pl.col("lat_text").str.len_chars() > 0)
+            )
+        except Exception:
+            return {}
+
+        aliases = {}
+        for row in df.to_dicts():
+            try:
+                aliases[row["name"].upper().strip()] = {
+                    "lat": float(row["lat"]),
+                    "lon": float(row["lon"]),
+                    "category": row.get("category", ""),
+                    "verified_name": row.get("verified_name", ""),
+                    "notes": row.get("notes", ""),
+                }
+            except (TypeError, ValueError, KeyError):
+                continue
+        return aliases
+
+    def lookup_alias(self, text: str) -> dict | None:
+        """Check if input matches a known infrastructure alias."""
+        return self._aliases.get(text.upper().strip())
 
     def search_name(
         self,

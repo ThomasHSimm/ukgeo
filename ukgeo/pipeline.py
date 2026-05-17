@@ -89,6 +89,21 @@ class Geocoder:
         if not text:
             return GeoResult(input=text, confidence="Low", notes="empty input")
 
+        # Level 0 — infrastructure alias lookup
+        alias = self._lookup.lookup_alias(text)
+        if alias:
+            return GeoResult(
+                input=text,
+                lat=alias["lat"],
+                lon=alias["lon"],
+                interpreted_as=alias.get("verified_name", text),
+                match_type=alias.get("category", "infrastructure"),
+                level_resolved=0,
+                confidence="High",
+                candidates_considered=1,
+                notes=f"source=alias_csv,{alias.get('notes', '')}",
+            )
+
         # Level 1 — regex / postcode
         result = try_level1(text)
         if result and result.resolved:

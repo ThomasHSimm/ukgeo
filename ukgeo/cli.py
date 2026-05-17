@@ -117,7 +117,7 @@ def cmd_geocode(args) -> int:
 def cmd_info(args) -> int:
     """Print info about the current ukgeo installation and data."""
     from ukgeo import __version__
-    from ukgeo.lookup import DEFAULT_PARQUET, JUNCTIONS_PARQUET, OSM_ROADS_PARQUET
+    from ukgeo.lookup import ALIASES_CSV, DEFAULT_PARQUET, JUNCTIONS_PARQUET, OSM_ROADS_PARQUET
     from ukgeo.level3_os_names import _get_api_key
 
     print(f"ukgeo {__version__}")
@@ -137,6 +137,21 @@ def cmd_info(args) -> int:
             print(f"  ✓ {label:<30} {path.name} ({size_str})")
         else:
             print(f"  ✗ {label:<30} not found — run download script")
+
+    alias_count = 0
+    if ALIASES_CSV.exists():
+        try:
+            import polars as pl
+
+            alias_count = (
+                pl.read_csv(ALIASES_CSV, comment_prefix="#")
+                .with_columns(pl.col("lat").cast(pl.Utf8).alias("lat_text"))
+                .filter(pl.col("lat_text").str.len_chars() > 0)
+                .height
+            )
+        except Exception:
+            alias_count = 0
+    print(f"  Infrastructure aliases: {alias_count} entries")
 
     print()
     api_key = _get_api_key()
