@@ -16,6 +16,7 @@ dependencies = [
     "requests>=2.31",    # postcodes.io (level 1)
     "pyyaml>=6.0",       # weights config
     "pyproj>=3.6",       # BNG→WGS84 (optional but recommended)
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

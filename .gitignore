@@ -1,6 +1,7 @@
 # OS Open Names parquet — too large for git (~200MB)
 data/*.parquet
 data/*.csv
+data/os_names_api_comparison.csv
 
 # Kaggle release files (large parquet + metadata)
 data/kaggle/
@@ -40,4 +41,6 @@ env/
 .idea/
 .vscode/
 .ipynb_checkpoints/
+notebooks/data/
+notebooks/.~lock.*
 *.swp

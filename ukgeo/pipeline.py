@@ -3,6 +3,7 @@ Main Geocoder class — orchestrates levels 1-2 (and stubs for 3-4).
 Designed for single calls and bulk batch processing.
 """
 
+import os
 from pathlib import Path
 from typing import Optional, Union
 import polars as pl
@@ -38,6 +39,7 @@ class Geocoder:
         weights_path: Optional[Path] = None,
         max_level: int = 2,
         extra_qualifiers: list[str] | None = None,
+        os_api_key: Optional[str] = None,
     ):
         """
         Args:
@@ -47,6 +49,7 @@ class Geocoder:
             weights_path:  Path to a YAML weights file (config/weights.yaml).
             max_level:     Maximum pipeline level to attempt (1-4). Default 2.
             extra_qualifiers: Additional domain words to treat as qualifiers.
+            os_api_key:    Optional OS Names API key for Level 3 fallback.
         """
         self._lookup = OSNamesLookup(parquet_path)
         self._gazetteer = TokenGazetteer(self._lookup)
@@ -54,6 +57,7 @@ class Geocoder:
         if extra_qualifiers is not None:
             self._weights.extra_qualifiers = extra_qualifiers
         self._max_level = max_level
+        self._os_api_key = os_api_key or os.getenv("OS_API_KEY")
 
     # ------------------------------------------------------------------
     # Weight loading
@@ -98,7 +102,7 @@ class Geocoder:
         if self._max_level >= 2:
             partial = result  # may carry road_ref etc.
             result2 = try_level2(text, partial, self._lookup, self._gazetteer, self._weights)
-            if result2 and result2.resolved:
+            if result2 and result2.resolved and result2.confidence != "Low":
                 return result2
 
         # Level 3 stub — API fallback
@@ -106,6 +110,9 @@ class Geocoder:
             result3 = self._try_level3(text)
             if result3 and result3.resolved:
                 return result3
+
+        if self._max_level >= 2 and "result2" in locals() and result2 and result2.resolved:
+            return result2
 
         # Level 4 stub — local LLM
         if self._max_level >= 4:
@@ -235,8 +242,13 @@ class Geocoder:
     # ------------------------------------------------------------------
 
     def _try_level3(self, text: str) -> Optional[GeoResult]:
-        # TODO: OS Names API or Nominatim via proxy
-        return None
+        partial = try_level1(text)
+        if partial and partial.match_type == "junction":
+            return None
+
+        from .level3_os_names import try_level3
+
+        return try_level3(text, self._lookup, api_key=self._os_api_key)
 
     def _try_level4(self, text: str) -> Optional[GeoResult]:
         # TODO: local Ollama LLM call
