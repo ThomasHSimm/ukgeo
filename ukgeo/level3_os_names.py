@@ -23,10 +23,66 @@ from .utils import load_env
 OS_NAMES_URL = "https://api.os.uk/search/names/v1/find"
 DEFAULT_MAX_RESULTS = 5
 
+# Known motorway service operators — strip these prefixes before API query
+_SERVICE_OPERATORS = {
+    "MOTO", "WELCOME BREAK", "ROADCHEF", "EXTRA", "WESTMORLAND",
+    "EUROGARAGES", "EG GROUP", "APPLEGREEN",
+}
+
+# Infrastructure suffixes that signal a service station input
+_SERVICE_SUFFIXES = {"SERVICES", "SERVICE AREA", "MSA", "MOTORWAY SERVICES"}
+
+# Known infrastructure type keywords -> OS API fq filter value
+_INFRASTRUCTURE_FQ = {
+    "bus station": "Bus_Station",
+    "coach station": "Coach_Station",
+    "interchange": "Bus_Station",
+    "bus interchange": "Bus_Station",
+    "airport": "Airport",
+    "services": "Road_User_Services",
+    "service area": "Road_User_Services",
+    "msa": "Road_User_Services",
+}
+
 
 def _get_api_key() -> Optional[str]:
     load_env()
     return os.getenv("OS_API_KEY")
+
+
+def normalise_infrastructure(text: str) -> tuple[str, str | None]:
+    """
+    Normalise infrastructure input text before OS API query.
+
+    Returns:
+        (normalised_text, fq_filter)
+        fq_filter is an OS Names API local_type filter string or None
+
+    Examples:
+        "Moto Keele" -> ("Keele Services", "Road_User_Services")
+        "Welcome Break Keele" -> ("Keele Services", "Road_User_Services")
+        "Leeds City Bus Station" -> ("Leeds City Bus Station", "Bus_Station")
+        "Skipton" -> ("Skipton", None)
+    """
+    upper = text.upper().strip()
+    normalised = text.strip()
+    fq = None
+
+    for keyword, filter_val in _INFRASTRUCTURE_FQ.items():
+        if keyword.upper() in upper:
+            fq = filter_val
+            break
+
+    for operator in _SERVICE_OPERATORS:
+        if upper.startswith(operator + " "):
+            remainder = text[len(operator):].strip()
+            if not any(s in remainder.upper() for s in _SERVICE_SUFFIXES):
+                remainder = remainder + " Services"
+            normalised = remainder
+            fq = "Road_User_Services"
+            break
+
+    return normalised, fq
 
 
 def query_os_names(
@@ -34,6 +90,7 @@ def query_os_names(
     api_key: str,
     max_results: int = DEFAULT_MAX_RESULTS,
     timeout: float = 10.0,
+    fq: str | None = None,
 ) -> list[dict]:
     """
     Query the OS Names API /find endpoint.
@@ -41,13 +98,16 @@ def query_os_names(
     Returns empty list if the API call fails or returns no results.
     """
     try:
+        params = {
+            "query": text,
+            "key": api_key,
+            "maxresults": max_results,
+        }
+        if fq:
+            params["fq"] = fq if ":" in fq else f"LOCAL_TYPE:{fq}"
         r = httpx.get(
             OS_NAMES_URL,
-            params={
-                "query": text,
-                "key": api_key,
-                "maxresults": max_results,
-            },
+            params=params,
             timeout=timeout,
         )
         r.raise_for_status()
@@ -134,7 +194,16 @@ def try_level3(
     if not key:
         return None
 
-    candidates = query_os_names(text, key, max_results=max_results)
+    normalised_text, fq = normalise_infrastructure(text)
+    candidates = query_os_names(
+        normalised_text,
+        key,
+        max_results=max_results,
+        fq=fq,
+    )
+    if not candidates and fq:
+        candidates = query_os_names(normalised_text, key, max_results=max_results)
+
     if not candidates:
         return None
 
@@ -151,12 +220,14 @@ def try_level3(
         lat=lat,
         lon=lon,
         interpreted_as=f"{top.get('NAME1', '')} ({top.get('LOCAL_TYPE', '')})",
-        match_type=top.get("LOCAL_TYPE", "").lower().replace(" ", "_"),
+        match_type=top.get("LOCAL_TYPE", "").lower().replace(" ", "_").replace(",", "_"),
         level_resolved=3,
         confidence=confidence,
         candidates_considered=len(candidates),
         notes=(
             f"source=os_names_api,"
+            f"normalised_query={normalised_text},"
+            f"fq={fq or 'none'},"
             f"county={top.get('COUNTY_UNITARY', '')},"
             f"spread_km={spread_km:.2f},"
             f"n_candidates={len(candidates)}"

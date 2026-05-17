@@ -23,9 +23,13 @@ dependencies = [
 ukgeo = "ukgeo.cli:main"
 
 [project.optional-dependencies]
+maps = [
+    "folium>=0.15",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
+    "folium>=0.15",
 ]
 ollama = [
     "ollama>=0.2",       # level 4 LLM (optional)

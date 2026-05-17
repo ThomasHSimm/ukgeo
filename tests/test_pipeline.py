@@ -350,3 +350,87 @@ def test_cli_csv(tmp_path):
     df = pl.read_csv(out_path)
     assert "lat" in df.columns
     assert len(df) == 3
+
+
+def test_plot_results_returns_map(tmp_path):
+    try:
+        import folium  # noqa: F401
+    except ImportError:
+        pytest.skip("folium not installed")
+
+    from ukgeo.maps import plot_results
+    import polars as pl
+
+    df = pl.DataFrame({
+        "input": ["Skipton, North Yorkshire", "M62 Junction 26"],
+        "lat": [53.9602, 53.7362],
+        "lon": [-2.0177, -1.7266],
+        "confidence": ["High", "High"],
+        "level_resolved": [2, 2],
+        "interpreted_as": ["Skipton (Town)", "M62 J26 (Junction)"],
+        "match_type": ["town", "junction"],
+        "candidates_considered": [20, 1],
+        "notes": ["match_score=0.308", "match_score=0.588"],
+    })
+
+    output = tmp_path / "test_map.html"
+    m = plot_results(df, output_path=output)
+    assert output.exists()
+    assert output.stat().st_size > 1000  # non-empty HTML
+
+
+def test_cli_plot(tmp_path):
+    import subprocess
+    import polars as pl
+    try:
+        import folium  # noqa: F401
+    except ImportError:
+        pytest.skip("folium not installed")
+
+    csv_path = tmp_path / "geocoded.csv"
+    pl.DataFrame({
+        "input": ["Skipton", "Bradford"],
+        "lat": [53.9602, 53.7950],
+        "lon": [-2.0177, -1.7594],
+        "confidence": ["High", "High"],
+        "level_resolved": [2, 2],
+        "interpreted_as": ["Skipton (Town)", "Bradford (City)"],
+        "match_type": ["town", "city"],
+        "candidates_considered": [20, 20],
+        "notes": ["match_score=0.308", "match_score=0.400"],
+    }).write_csv(csv_path)
+
+    out_path = tmp_path / "map.html"
+    result = subprocess.run(
+        ["ukgeo", "plot", str(csv_path), "--output", str(out_path)],
+        capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert out_path.exists()
+
+
+def test_infrastructure_normalisation():
+    from ukgeo.level3_os_names import normalise_infrastructure
+
+    # Operator prefix stripping
+    assert normalise_infrastructure("Moto Keele")[0] == "Keele Services"
+    assert normalise_infrastructure("Moto Keele")[1] == "Road_User_Services"
+    assert normalise_infrastructure("Welcome Break Keele")[0] == "Keele Services"
+
+    # Already canonical — no change to text
+    text, fq = normalise_infrastructure("Keele Services")
+    assert text == "Keele Services"
+    assert fq == "Road_User_Services"
+
+    # Bus station detection
+    _, fq = normalise_infrastructure("Leeds City Bus Station")
+    assert fq == "Bus_Station"
+
+    # Airport detection
+    _, fq = normalise_infrastructure("Leeds Bradford Airport")
+    assert fq == "Airport"
+
+    # Plain place — no filter
+    text, fq = normalise_infrastructure("Skipton")
+    assert text == "Skipton"
+    assert fq is None

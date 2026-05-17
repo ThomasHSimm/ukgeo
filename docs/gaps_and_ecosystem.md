@@ -173,3 +173,91 @@ The minimal viable Python stats19 package would need:
 - `to_geodataframe(df)` — convert Easting/Northing to a GeoDataFrame with OSGB36 CRS
 
 ukgeo's `scripts/build_stats19_eval.py` is already partway there. Whether this grows into a separate package or stays as utility scripts is a decision for later — but the gap is real and documented here.
+
+---
+
+## Infrastructure geocoding — findings
+
+### Motorway service stations
+
+**OS Open Names parquet:** Does not contain service stations. The `Road_User_Services`
+local type exists in the OS Open Names specification but is absent from the CSV export
+in our downloaded data. Confirmed by querying all 9 local types present in the parquet.
+
+**OSM named junctions parquet:** Partially covers service stations — Winchester Services,
+Stafford North Services, Washington Services, Bolton West Services etc. are present.
+However coverage is inconsistent and includes out-of-GB entries (Enfield Services,
+Lusk Services in Ireland) due to a bounding box issue in the download script.
+
+**OS Names API:** Handles canonical service station names well:
+- `"Keele Services"` → correct (Road User Services, Staffordshire)
+- `"Wetherby Services"` → correct (Road User Services, North Yorkshire)
+- Fails on operator prefixes: `"Moto Keele"` → returns a road name
+- Fails on non-canonical variants: `"Keele Motorway Services"` → returns wrong services
+
+**Fix implemented:** Operator prefix stripping in `level3_os_names.py` —
+`"Moto Keele"` → `"Keele Services"` before API query, with `fq=Road_User_Services`
+filter to avoid wrong-type results.
+
+**Known remaining gap:** Non-canonical service station names without a recognised
+operator prefix (e.g. `"Tebay Services"` where Westmorland is the operator but
+`"Tebay"` alone is the common name) will resolve correctly. Edge cases where the
+popular name differs significantly from the OS canonical name will fail at all levels.
+
+---
+
+### Bus stations and interchanges
+
+**OS Names API coverage (tested May 2026):**
+
+| Input | API result | Correct? |
+|---|---|---|
+| `Leeds City Bus Station` | Leeds City Bus Station (Bus Station) | ✓ |
+| `Birmingham Coach Station` | Birmingham Coach Station (Coach Station) | ✓ |
+| `Victoria Coach Station London` | Victoria Coach Station (Coach Station) | ✓ |
+| `Sheffield Interchange` | Sheffield Interchange (Bus Station) | ✓ |
+| `Bristol Bus Station` | Bristol Bus and Coach Station (Bus Station) | ✓ |
+| `Huddersfield Bus Station` | Huddersfield Bus Station (Bus Station) | ✓ |
+| `Wakefield Bus Station` | Wakefield Bus Station (Bus Station) | ✓ |
+| `Castleford Bus Station` | Castleford Bus Station (Bus Station) | ✓ |
+| `Bradford Interchange` | Bradford Interchange (Railway Station) | ⚠️ wrong type, likely correct coords |
+| `Manchester Piccadilly bus station` | Piccadilly Station Approach (Named Road) | ✗ |
+| `Liverpool One Bus Station` | Queen Square Bus Station (Bus Station) | ✗ wrong name |
+| `Harrogate Bus Station` | Alnwick Bus Station (Bus Station) | ✗ wrong city |
+
+**Fix implemented:** `fq=Bus_Station` filter applied automatically when input contains
+"bus station", "coach station", or "interchange" — eliminates wrong-type results like
+Bradford returning a Railway Station entry.
+
+**Known remaining gaps:**
+- Generic constructions like `"[city] bus station"` without the official name fail
+- Liverpool One Bus Station not in OS Names under that name
+- Harrogate Bus Station — OS Names returns Alnwick (wrong city). Genuine data gap.
+- Manchester inputs need canonical name (`"Chorlton Street Coach Station"` not
+  `"Manchester Piccadilly bus station"`)
+
+---
+
+### Airports
+
+**OS Names API:** Handles airports well with canonical names.
+- `"Leeds Bradford Airport"` → Leeds Bradford International Airport (Airport) ✓
+- Use `fq=Airport` filter for inputs containing "airport"
+
+---
+
+### Named road infrastructure (viaducts, bridges, crossings)
+
+**All levels:** Limited coverage.
+- `"Dartford Crossing"` → Stone Crossing railway station (wrong) at all levels
+- `"Tinsley Viaduct Sheffield"` → Tinsley suburb only
+- `"Lofthouse Interchange"` → Lofthouse village (nearest named place)
+
+These are genuine gaps across OS Open Names, OSM, and the OS Names API.
+Named road structures (viaducts, bridges, major crossings) are not well represented
+in any open geocoding dataset. The Dartford Crossing/QE2 Bridge is a notable example —
+a major piece of national infrastructure with no clean geocodable entry.
+
+**Recommendation:** For these cases, maintain a small hand-curated alias table in
+`uk_admin.py` or a separate `data/infrastructure_aliases.csv` with canonical
+name → lat/lon mappings for the most important named structures.

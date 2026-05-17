@@ -133,7 +133,8 @@ def cmd_info(args) -> int:
     for label, path in files:
         if path.exists():
             size_mb = path.stat().st_size / (1 << 20)
-            print(f"  ✓ {label:<30} {path.name} ({size_mb:.1f} MB)")
+            size_str = f"{size_mb:.1f} MB" if size_mb >= 1 else f"{path.stat().st_size / 1024:.0f} KB"
+            print(f"  ✓ {label:<30} {path.name} ({size_str})")
         else:
             print(f"  ✗ {label:<30} not found — run download script")
 
@@ -147,6 +148,38 @@ def cmd_info(args) -> int:
     print(f"  Level 3 — OS Names API             {'yes' if api_key else 'no — set OS_API_KEY in .env'}")
     print("  Level 4 — Ollama LLM               not implemented")
 
+    return 0
+
+
+def cmd_plot(args) -> int:
+    """Generate an HTML map from a geocoded CSV."""
+    try:
+        import folium  # noqa: F401
+    except ImportError:
+        print("Error: folium not installed. Run: pip install folium", file=sys.stderr)
+        return 1
+
+    import polars as pl
+    from ukgeo.maps import plot_results
+
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"Error: file not found: {input_path}", file=sys.stderr)
+        return 1
+
+    df = pl.read_csv(input_path)
+    required = ["lat", "lon"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        print(
+            f"Error: missing columns {missing}. "
+            "Run ukgeo geocode first to add lat/lon columns.",
+            file=sys.stderr,
+        )
+        return 1
+
+    output_path = Path(args.output) if args.output else input_path.with_suffix(".html")
+    plot_results(df, output_path=output_path)
     return 0
 
 
@@ -188,6 +221,12 @@ def main() -> int:
     # --- info subcommand ---
     info_p = sub.add_parser("info", help="Show ukgeo installation status")
     info_p.set_defaults(func=cmd_info)
+
+    # --- plot subcommand ---
+    plot_p = sub.add_parser("plot", help="Generate an HTML map from a geocoded CSV")
+    plot_p.add_argument("input", help="Path to geocoded CSV (must have lat/lon columns)")
+    plot_p.add_argument("--output", "-o", help="Output HTML path (default: input.html)")
+    plot_p.set_defaults(func=cmd_plot)
 
     args = parser.parse_args()
     return args.func(args)

@@ -50,6 +50,10 @@ ukgeo geocode crashes.csv --column road_reference --domain road_safety
 # Enable Level 3 OS Names API fallback (requires OS_API_KEY in .env)
 ukgeo geocode locations.csv --max-level 3
 
+# Generate an interactive HTML map from geocoded results
+ukgeo geocode locations.csv --output results.csv
+ukgeo plot results.csv --output results_map.html
+
 # Check installation status
 ukgeo info
 ```
