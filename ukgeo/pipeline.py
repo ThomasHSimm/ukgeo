@@ -4,13 +4,15 @@ Designed for single calls and bulk batch processing.
 """
 
 import os
+from pathlib import Path
 from typing import Optional, Union
+
 import polars as pl
 
-from .models import GeoResult
-from .lookup import DEFAULT_PARQUET, OSNamesLookup
 from .level1_regex import try_level1
 from .level2_ner import ScoringWeights, TokenGazetteer, try_level2
+from .lookup import DEFAULT_PARQUET, OSNamesLookup
+from .models import GeoResult
 
 
 class Geocoder:
@@ -70,8 +72,9 @@ class Geocoder:
         return ScoringWeights()
 
     def save_weights(self, path: Path):
-        import yaml
         import dataclasses
+
+        import yaml
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             yaml.dump(dataclasses.asdict(self._weights), f)
@@ -211,7 +214,6 @@ class Geocoder:
         test_data: list of dicts with keys: input, lat (true), lon (true)
         Returns a DataFrame with per-row distance error in metres.
         """
-        import math
 
         rows = []
         for item in test_data:
@@ -240,7 +242,8 @@ class Geocoder:
         df = pl.DataFrame(rows)
         resolved = df.filter(pl.col("resolved"))
         print(f"\n--- {label} benchmark ---")
-        print(f"  Resolved:     {len(resolved)}/{len(df)} ({100*len(resolved)/max(len(df),1):.1f}%)")
+        resolved_pct = 100 * len(resolved) / max(len(df), 1)
+        print(f"  Resolved:     {len(resolved)}/{len(df)} ({resolved_pct:.1f}%)")
         if len(resolved) > 0:
             errs = resolved["distance_m"].drop_nulls()
             print(f"  Median error: {errs.median():.0f} m")

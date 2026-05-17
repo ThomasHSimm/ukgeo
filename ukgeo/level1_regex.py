@@ -5,8 +5,10 @@ Fast, no external dependencies beyond requests.
 """
 
 import re
-import requests
 from typing import Optional
+
+import requests
+
 from .models import GeoResult
 
 # ---------------------------------------------------------------------------

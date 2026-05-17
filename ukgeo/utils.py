@@ -2,8 +2,8 @@
 Shared utility functions for ukgeo.
 """
 
-from pathlib import Path
 import os
+from pathlib import Path
 
 
 def load_env(dotenv_path: Path | str = ".env") -> None:

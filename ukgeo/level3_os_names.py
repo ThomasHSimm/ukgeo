@@ -16,8 +16,8 @@ from typing import Optional
 
 import httpx
 
-from .models import GeoResult
 from .lookup import OSNamesLookup
+from .models import GeoResult
 from .utils import load_env
 
 OS_NAMES_URL = "https://api.os.uk/search/names/v1/find"

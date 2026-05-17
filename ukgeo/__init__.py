@@ -8,11 +8,11 @@ warnings.filterwarnings(
     module="requests",
 )
 
-from .pipeline import Geocoder
-from .models import GeoResult
-from .level2_ner import ScoringWeights
-from .utils import load_env, get_env_key
-from .maps import plot_results, plot_batch_summary
+from .level2_ner import ScoringWeights  # noqa: E402
+from .maps import plot_batch_summary, plot_results  # noqa: E402
+from .models import GeoResult  # noqa: E402
+from .pipeline import Geocoder  # noqa: E402
+from .utils import get_env_key, load_env  # noqa: E402
 
 __all__ = [
     "Geocoder",

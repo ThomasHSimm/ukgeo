@@ -4,10 +4,11 @@ Requires folium: pip install folium or pip install ukgeo[maps]
 """
 
 from __future__ import annotations
-from pathlib import Path
-from typing import Optional, Union
-import polars as pl
 
+from pathlib import Path
+from typing import Any, Optional, Union
+
+import polars as pl
 
 # Colour scheme
 COLOURS = {
@@ -31,7 +32,7 @@ def plot_results(
     title: str = "ukgeo geocoding results",
     zoom_start: int = 6,
     centre: tuple[float, float] = (54.0, -2.0),
-) -> "folium.Map":
+) -> Any:
     """
     Plot geocoding results on an interactive folium map.
 
@@ -183,7 +184,7 @@ def plot_results(
 def plot_batch_summary(
     results: pl.DataFrame,
     output_path: Optional[Union[str, Path]] = None,
-) -> "folium.Map":
+) -> Any:
     """
     Convenience wrapper — plots with a summary title showing resolve rate.
     """
