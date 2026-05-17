@@ -23,4 +23,4 @@ __all__ = [
     "plot_results",
     "plot_batch_summary",
 ]
-__version__ = "0.4.0"
+__version__ = "0.4.1"

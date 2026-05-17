@@ -1,6 +1,6 @@
 [project]
 name = "ukgeo"
-version = "0.4.0"
+version = "0.4.1"
 description = "UK location free-text geocoder — resolves road references, place names, junctions, and infrastructure to lat/lon"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,6 +37,7 @@ Homepage = "https://github.com/ThomasHSimm/ukgeo"
 Repository = "https://github.com/ThomasHSimm/ukgeo"
 "Bug Tracker" = "https://github.com/ThomasHSimm/ukgeo/issues"
 Kaggle = "https://www.kaggle.com/datasets/thomassimm/ukgeo-combined-dataset"
+"Open Road Risk" = "https://openroadrisk.org/tools/ukgeo.html"
 
 [build-system]
 requires = ["hatchling"]

@@ -11,7 +11,7 @@
 
 ```bash
 pip install ukgeo
-ukgeo setup        # downloads ~41MB data file from Kaggle
+ukgeo setup        # downloads ~51MB data file from Kaggle
 ukgeo geocode "M62 Junction 26"
 ```
 
@@ -86,10 +86,11 @@ Designed for bulk processing with a parquet-backed setup step: load reference da
 
 | Level | Method | Handles |
 |---|---|---|
-| 1 | Regex + postcodes.io/local postcode fallback | Full UK postcodes, M/A/B road pattern extraction |
-| 2 | OS/OpenStreetMap token scoring | Places, roads, junctions, named roundabouts/interchanges |
-| 3 | API fallback *(stub)* | Ambiguous cases needing external lookup |
-| 4 | Local Ollama LLM *(stub)* | Last resort: typos, novel references |
+| 0 | Infrastructure alias lookup | Named bridges, tunnels, junctions, bus stations |
+| 1 | Regex + postcodes.io | Full UK postcodes, M/A/B road pattern extraction |
+| 2 | OS/OSM token scoring | Places, roads, junctions, named roundabouts |
+| 3 | OS Names API fallback | Bus stations, airports, service stations |
+| 4 | Local Ollama LLM (stub) | Last resort — not yet implemented |
 
 ## Usage
 
@@ -218,7 +219,7 @@ ukgeo/
 
 - [Kaggle dataset](https://www.kaggle.com/datasets/thomassimm/ukgeo-combined-dataset) — pre-built data download
 - [Open Road Risk](https://github.com/ThomasHSimm/open-road-risk) — road safety risk modelling pipeline that ukgeo supports
-- [docs/alternative.md](docs/alternative.md) — honest comparison with other UK geocoding tools
+- [docs/alternatives.md](docs/alternatives.md) — honest comparison with other UK geocoding tools
 - [docs/gaps_and_ecosystem.md](docs/gaps_and_ecosystem.md) — what ukgeo is missing and the broader ecosystem
 - [docs/STATUS.md](docs/STATUS.md) — current test results and benchmark numbers
 - [TODO.md](TODO.md) — development roadmap
