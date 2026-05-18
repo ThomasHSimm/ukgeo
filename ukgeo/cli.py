@@ -311,7 +311,7 @@ def main() -> int:
         prog="ukgeo",
         description="UK location free-text geocoder",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.4.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 0.4.1")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- geocode subcommand ---
